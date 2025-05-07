@@ -1,0 +1,153 @@
+
+<div id="jipipe_runner_container">
+  <h1>JIPipeRunner configuration</h1>
+
+  <!-- A simple input for one or multiple dataset IDs (comma-separated) -->
+  <div id="file_info">
+    <h2>Node summary</h2>
+  </div>
+  
+  <div id="input">
+    <h2>Input node configuration</h2>
+    <p>Enter the comma-seperated dataset IDs for the corresponding input nodes below:</p>
+  </div>
+  
+  <!-- When this button is clicked, we fetch data from the backend -->
+  <div style="text-align: center;">
+    <p></p>
+    <button id="fetchDatasetsBtn">Start JIPipeRunner</button>
+    <p></p>
+  </div>
+  
+  <!-- A container to display results (optional) -->
+  <div id="results"></div>
+</div>
+
+<script>
+  (function() {
+    let JIPipeJSON = null;
+    // Fetch JIPipe JSON data
+    fetch('/JIPipeRunner/getJIPipeJSON/{{ project_id }}/json/')
+      .then(response => {
+        if (!response.ok) {
+          // Attempt to extract the error message from the response body
+          return response.text().then(text => {
+            throw new Error(`HTTP error ${response.status}: ${text}`);
+          });
+        }
+        // If the response is OK, parse it as JSON
+        return response.json();
+      })
+      .then(data => {
+        JIPipeJSON = data;
+        const JSONstr = JSON.stringify(data);
+        const JSONobj = JSON.parse(JSONstr);
+        const nodes = Object.values(JSONobj["graph"]["nodes"]);
+
+        // Display total number of nodes
+        document.getElementById("file_info").innerHTML += "<p> Total number of nodes: " + nodes.length + "</p>";
+
+        let numInputNodes = 0;
+        let numOutputNodes = 0;
+
+        // Process nodes
+        for (const node of nodes) {
+          if (node["jipipe:alias-id"].includes("define-dataset-ids")) {
+            numInputNodes += 1;
+            const inputRow = document.createElement('div');
+            inputRow.style.display = 'flex';
+            inputRow.style.alignItems = 'center';
+            inputRow.style.marginBottom = '10px';
+            inputRow.innerHTML = '<label for="NodeInput' + numInputNodes + '" style="margin-right: 10px;">' + node["jipipe:node:name"] + ': </label>' +
+              '<input type="text" id="NodeInput' + numInputNodes + '" name="datasetIds" placeholder="' + node["dataset-ids"] + '" />';
+            document.getElementById("input").appendChild(inputRow);
+          }
+          if (node["jipipe:alias-id"].includes("upload")) {
+            numOutputNodes += 1;
+          }
+        }
+
+        // Display number of input and output nodes
+        document.getElementById("file_info").innerHTML += "<p> Number of input nodes: " + numInputNodes + "</p>";
+        document.getElementById("file_info").innerHTML += "<p> Number of output nodes: " + numOutputNodes + "</p>";
+      })
+      .catch(error => {
+        // Log the error message to the console
+        console.error('Fetch error:', error.message);
+        document.getElementById("jipipe_runner_container").innerHTML = "<p>Error fetching JIPipe JSON data: " + error.message + "</p>";
+      });
+
+    // Grab references to elements
+    const fetchBtn = document.getElementById('fetchDatasetsBtn');
+    const resultsDiv = document.getElementById('results');
+
+    // Handle button click
+    fetchBtn.addEventListener('click', async (event) => {
+      event.preventDefault(); // prevent any default form submission
+
+      // Clear previous messages
+      resultsDiv.innerHTML = "";
+
+      // Start a "dot animation" indicating work in progress
+      let dotCount = 1;
+      const maxDots = 4;
+      const intervalId = setInterval(() => {
+        // Generate dotCount dots
+        const dots = ' .'.repeat(dotCount);
+        // Update the display text
+        resultsDiv.innerHTML = `<p>Processing data${dots}</p>`;
+        // Cycle between 1 and 4
+        dotCount = (dotCount % maxDots) + 1;
+      }, 500);
+
+      // Get input fields
+      const allInputs = document.querySelectorAll('input[name="datasetIds"]');
+      let defineNodeCounter = 0;
+      const nodes = Object.values(JIPipeJSON["graph"]["nodes"]);
+
+      for (const node of nodes) {
+          if (node["jipipe:alias-id"] && node["jipipe:alias-id"].includes("define-dataset-ids")) {
+            // For each define node, find its corresponding input box
+            // (We rely on the order we created them matching defineNodeCounter)
+            const inputField = allInputs[defineNodeCounter];
+            defineNodeCounter++;
+
+            if (inputField) {
+              // The user might have typed a comma-separated list
+              const userValue = inputField.value.trim();
+              if (userValue) {
+                // Overwrite dataset-ids with an array of user-supplied strings
+                node["dataset-ids"] = userValue.split(",").map(v => v.trim());
+              }
+            }
+          }
+        }
+
+      // Send the modified JSON to the server
+      try {
+        const response = await fetch(`/JIPipeRunner/process_datasets/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(JIPipeJSON)
+        });
+        if (!response.ok) {
+          // Stop the animation
+          clearInterval(intervalId);
+          resultsDiv.innerHTML = '';
+          throw new Error(`Server responded with status ${response.status} and message: ${response.statusText}`);
+        }
+        const data = await response.json();
+        // Stop the animation
+        clearInterval(intervalId);
+        // Display or process the data
+        resultsDiv.innerHTML = `<p>${JSON.stringify(data)}</p>`;
+      } catch (error) {
+        // Stop the animation
+        clearInterval(intervalId);
+        resultsDiv.innerHTML = `<p>Error fetching datasets: ${error.message}</p>`;
+      }
+    });
+  })();
+</script>
