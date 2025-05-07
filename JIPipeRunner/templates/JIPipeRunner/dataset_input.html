@@ -1,0 +1,184 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JIPipeRunner Configuration</title>
+  <!-- Point to your external CSS -->
+  <link rel="stylesheet" href="{% static 'JIPipeRunner/css/jipipe_runner.css' %}">
+</head>
+<body>
+<div id="jipipe_runner_container">
+  <h1>JIPipeRunner Configuration</h1>
+
+  <section id="file_info">
+    <h2>Node Summary</h2>
+    <!-- Dynamically added summary -->
+  </section>
+
+  <section id="input">
+    <h2>Input Node Configuration</h2>
+    <p>Enter comma-separated dataset IDs for each input node:</p>
+    <!-- Dynamically added dataset inputs -->
+  </section>
+
+  <section id="parameters">
+    <h2>Parameter Configuration</h2>
+    <p>Enter parameter values below:</p>
+    <!-- Dynamically added parameters -->
+  </section>
+
+  <div style="text-align: center; margin-bottom: 20px;">
+    <button id="startRunnerBtn">Start JIPipeRunner</button>
+  </div>
+
+  <section id="results">
+    <pre id="logOutput"
+         style="white-space: pre-wrap; margin:0; padding:10px; border:1px solid #ccc; height:400px; overflow:auto;">
+    </pre>
+  </section>
+</div>
+
+<script>
+(async function() {
+  // Map of node UUID to its parameter key
+  const uuidToParamKey = {};
+  let pipelineConfig = null;
+
+  // CSRF helper
+  function getCookie(name) {
+    let v = null;
+    document.cookie.split(";").forEach(c => {
+      const [k, val] = c.trim().split("=");
+      if (k === name) v = decodeURIComponent(val);
+    });
+    return v;
+  }
+  const csrftoken = getCookie("csrftoken");
+
+  // Fetch the JIPipe JSON for the given project
+  async function fetchPipelineConfig(projectId) {
+    const resp = await fetch(`/JIPipeRunner/getJIPipeJSON/${projectId}/json/`);
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errText}`);
+    }
+    return resp.json();
+  }
+
+  // Render summary of total, input, and output nodes
+  function renderNodeSummary(nodes) {
+    const info = document.getElementById('file_info');
+    const all = Object.values(nodes);
+    info.innerHTML += `<p>Total nodes: ${all.length}</p>`;
+    info.innerHTML += `<p>Input nodes: ${all.filter(n => n['jipipe:alias-id']?.includes('define-dataset-ids')).length}</p>`;
+    info.innerHTML += `<p>Output nodes: ${all.filter(n => n['jipipe:alias-id']?.includes('upload')).length}</p>`;
+  }
+
+  // Create input fields for dataset IDs
+  function renderInputNodes(nodes) {
+    const container = document.getElementById('input');
+    Object.entries(nodes).forEach(([uuid, node]) => {
+      if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
+        const row = document.createElement('div');
+        row.className = 'input-row';
+        const inputId = `dataset-id-${uuid}`;
+        const placeholder = (node['dataset-ids'] || []).join(', ');
+        row.innerHTML = `
+          <label for="${inputId}">${node['jipipe:node:name']}:</label>
+          <input type="text" id="${inputId}" name="datasetIds" placeholder="${placeholder}">
+        `;
+        container.appendChild(row);
+      }
+    });
+  }
+
+  // Create input fields for user parameters
+  function renderParameters(metadata, nodes) {
+    const container = document.getElementById('parameters');
+    const groups = metadata['exported-parameters']['parameter-reference-groups'];
+    groups.forEach(group => {
+      group.content.forEach(item => {
+        const [uuid, paramKey] = item.path.split('/');
+        uuidToParamKey[uuid] = paramKey;
+        const defaultVal = nodes[uuid]?.[paramKey] || '';
+        const row = document.createElement('div');
+        row.className = 'input-row';
+        row.innerHTML = `
+          <label for="param-${uuid}">${item['custom-name']}:</label>
+          <input type="text" id="param-${uuid}" name="${item['custom-name']}" placeholder="${defaultVal}">
+        `;
+        container.appendChild(row);
+      });
+    });
+  }
+
+  // NEW: start the job and poll logs
+  async function processDatasets() {
+    const output = document.getElementById('logOutput');
+    output.textContent = '';  // clear old
+
+    // 1) Start background job
+    const startResp = await fetch('/JIPipeRunner/start_job/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrftoken
+      },
+      body: JSON.stringify(pipelineConfig)
+    });
+    if (!startResp.ok) {
+      const txt = await startResp.text();
+      output.textContent = `Error ${startResp.status}: ${txt}`;
+      return;
+    }
+    const { job_id } = await startResp.json();
+
+    // 2) Poll logs every 2 seconds
+    let finished = false;
+    let lastLen = 0;
+    while (!finished) {
+      const logResp = await fetch(`/JIPipeRunner/fetch_logs/${job_id}/`, {
+        credentials: 'same-origin'
+      });
+      if (!logResp.ok) {
+        output.textContent += `\nError fetching logs: ${logResp.status}`;
+        return;
+      }
+      const { status, logs } = await logResp.json();
+      if (logs.length > lastLen) {
+        output.textContent += logs.slice(lastLen).join('\n') + '\n';
+        output.scrollTop = output.scrollHeight;
+        lastLen = logs.length;
+      }
+      finished = (status === 'finished');
+      if (!finished) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  // Immediate initialization (no DOMContentLoaded)
+  try {
+    const projectId = '{{ project_id }}';
+    // Attach click handler
+    document.getElementById('startRunnerBtn')
+      .addEventListener('click', e => { e.preventDefault(); processDatasets(); });
+
+    // Fetch and render configuration
+    pipelineConfig = await fetchPipelineConfig(projectId);
+    const nodes = pipelineConfig.graph.nodes;
+    renderNodeSummary(nodes);
+    renderInputNodes(nodes);
+    renderParameters(
+      pipelineConfig['additional-metadata']['org.hkijena.jipipe:pipeline-parameters'],
+      nodes
+    );
+  } catch (err) {
+    const container = document.getElementById('jipipe_runner_container');
+    container.innerHTML = `<p class="error">Error loading configuration: ${err.message}</p>`;
+    console.error(err);
+  }
+})();
+</script>
+</body>
+</html>
