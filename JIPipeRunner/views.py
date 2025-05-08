@@ -1,186 +1,49 @@
-import os
-import re
 import json
-import time
-import tempfile
-import shutil
 import logging
+import os
+import shutil
 import subprocess
-from pathlib import Path
-import uuid
+import tempfile
 import threading
+import uuid
 
-from django.shortcuts import render
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse, Http404
-from django.views.decorators.http import require_POST, require_GET
-from django.views.decorators.csrf import csrf_exempt
+from pathlib import Path
+
 from django.conf import settings
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
+from django.http import Http404, HttpResponse, JsonResponse
+from django.shortcuts import render
+from django.views.decorators.http import require_GET, require_POST
 
 import omero
 import omero.model
 from omero.rtypes import rstring
 from omeroweb.decorators import login_required
 
-# Optional imports for future extensions
-# import numpy as np
-# from PIL import Image
-# import cv2
+# Directory where JIPipe log files are stored (customize via Django settings)
+LOG_DIR = getattr(settings, 'JIPIPE_LOG_ROOT', '/tmp/jipipe_logs')
+os.makedirs(LOG_DIR, exist_ok=True)
 
-# Mapping of file extensions to Pillow formats
-EXTENSION_TO_FORMAT = {
-    '.jpg': 'JPEG',
-    '.jpeg': 'JPEG',
-    '.png': 'PNG',
-    '.tiff': 'TIFF',
-    '.tif': 'TIFF',
-    '.bmp': 'BMP',
-}
 
-# You can customize this in your Django settings if you like.
-LOG_ROOT = getattr(settings, "JIPIPE_LOG_ROOT", "/tmp/jipipe_logs")
-os.makedirs(LOG_ROOT, exist_ok=True)
-
-def _run_jipipe(config, job_id, conn, log_path):
+def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file_path: str) -> None:
     """
-    Background thread: run JIPipe and stream stdout → shared log file.
+    Execute JIPipe CLI in a background thread and stream its output to a log file.
     """
-    logger = logging.getLogger(__name__)
-    input_tmp = tempfile.mkdtemp()
-    output_tmp = tempfile.mkdtemp()
-    try:
-        # write the .jip file
-        jip_file = Path(input_tmp) / "JIPipeProject.jip"
-        with open(jip_file, "w") as fp:
-            json.dump(config, fp)
+    log = logging.getLogger(__name__)
 
-        # build and launch the CLI
-        cmd = [
-            "xvfb-run", "-a",
-            "/opt/JIPipe-4.2/Fiji.app/ImageJ-linux64",
-            "-Dorg.apache.logging.log4j.simplelog.StatusLogger.level=ERROR",
-            "-Dorg.apache.logging.log4j.simplelog.level=ERROR",
-            "--memory", "8G",
-            "--pass-classpath",
-            "--full-classpath",
-            "--main-class", "org.hkijena.jipipe.cli.JIPipeCLIMain",
-            "run",
-            "--project", str(jip_file),
-            "--output-folder", output_tmp,
-        ]
-        with open(log_path, "w") as log:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1
-            )
-            for line in proc.stdout:
-                log.write(line)
-                log.flush()
-            proc.wait()
-            log.write(f"\n[ JIPipe exited with code {proc.returncode} ]\n")
-    except Exception as e:
-        with open(log_path, "a") as log:
-            log.write(f"\nERROR in background job: {e}\n")
-    finally:
-        shutil.rmtree(input_tmp)
-        # leave output_tmp around if you need it
-
-
-@csrf_exempt
-@require_POST
-@login_required()
-def start_job(request, conn=None, **kwargs):
-    """
-    Starts JIPipe in a background thread.
-    Returns JSON: { job_id: str }.
-    """
-    # 1) Parse & patch config (same as before)
-    payload = json.loads(request.body.decode("utf-8"))
-    conn.SERVICE_OPTS.setOmeroGroup("0")
-    project = _get_or_create_results_project(conn)
-    project_id = int(project.getId())
-    for node in payload.get("graph", {}).get("nodes", {}).values():
-        if "define-project-ids" in node.get("jipipe:alias-id", "").lower():
-            node["dataset-ids"] = [project_id]
-
-    # 2) Spin up the job
-    job_id = uuid.uuid4().hex
-    log_path = os.path.join(LOG_ROOT, f"{job_id}.log")
-
-    # Background thread writes to that log_path
-    threading.Thread(
-        target=_run_jipipe,
-        args=(payload, job_id, conn, log_path),
-        daemon=True
-    ).start()
-
-    return JsonResponse({"job_id": job_id})
-
-
-@require_GET
-@login_required()
-def fetch_logs(request, job_id, **kwargs):
-    """
-    Poll this to get status & log lines so far.
-    Returns JSON: { status: "running"|"finished", logs: [ str, ... ] }.
-    """
-    log_path = os.path.join(LOG_ROOT, f"{job_id}.log")
-    if not os.path.exists(log_path):
-        raise Http404(f"No such job {job_id}")
-
-    with open(log_path, "r") as f:
-        lines = f.read().splitlines()
-
-    # detect if finished by looking for the exit‐code footnote
-    finished = any("JIPipe exited with code" in line for line in lines[-3:])
-    status = "finished" if finished else "running"
-
-    return JsonResponse({"status": status, "logs": lines})
-
-
-@csrf_exempt
-@require_POST
-@login_required()
-def process_datasets(request, conn=None, **kwargs):
-    """
-    Receive a JIPipe JSON, write it to a .jip file, execute the JIPipe CLI,
-    and return processing results or errors.
-    """
-    logger = logging.getLogger(__name__)
-    conn.SERVICE_OPTS.setOmeroGroup('0')
-    input_temp_dir = tempfile.mkdtemp()
-    output_temp_dir = tempfile.mkdtemp()
-    input_path = Path(input_temp_dir)
-    output_path = Path(output_temp_dir)
+    # Create temporary directories for input and output data
+    temp_input = tempfile.mkdtemp()
+    temp_output = tempfile.mkdtemp()
 
     try:
-        # Parse and modify incoming JSON
-        content = request.body.decode('utf-8')
-        config = json.loads(content)
-        logger.info("Received pipeline configuration JSON")
+        # Write the JIPipe project configuration to a .jip file
+        jip_project_file = Path(temp_input) / 'JIPipeProject.jip'
+        with open(jip_project_file, 'w') as jip_file:
+            json.dump(project_config, jip_file)
 
-        # Ensure or create JIPipeResults project
-        project = _get_or_create_results_project(conn)
-        project_id = int(project.getId())
-
-        # Assign any define-project-ids nodes to results project
-        for node in config.get('graph', {}).get('nodes', {}).values():
-            alias = node.get('jipipe:alias-id', '').lower()
-            if 'define-project-ids' in alias:
-                node['dataset-ids'] = [project_id]
-
-        # Write .jip file
-        jip_file = input_path / 'JIPipeProject.jip'
-        with jip_file.open('w') as fp:
-            json.dump(config, fp)
-
-        # Build and run JIPipe CLI command
-        cli_path = Path("/opt/JIPipe-4.2/Fiji.app/ImageJ-linux64")
-        # Build the command as before
+        # Build the JIPipe CLI command
         command = [
             'xvfb-run', '-a',
-            str(cli_path),
+            '/opt/JIPipe-4.2/Fiji.app/ImageJ-linux64',
             '-Dorg.apache.logging.log4j.simplelog.StatusLogger.level=ERROR',
             '-Dorg.apache.logging.log4j.simplelog.level=ERROR',
             '--memory', '8G',
@@ -188,67 +51,106 @@ def process_datasets(request, conn=None, **kwargs):
             '--full-classpath',
             '--main-class', 'org.hkijena.jipipe.cli.JIPipeCLIMain',
             'run',
-            '--project', str(jip_file),
-            '--output-folder', str(output_path),
+            '--project', str(jip_project_file),
+            '--output-folder', temp_output,
         ]
 
-        # Launch the process
-        proc = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,  # line-buffered
-        )
+        # Launch the process and stream stdout/stderr to the log file
+        with open(log_file_path, 'w') as log_file:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
 
-        # Generator that yields lines as they come
-        def stream():
-            info_rx = re.compile(r'^\[INFO\]|^\[WARNING\]|\bwarning\b|^ERROR StatusLogger|^HTTP/')
-            yield "JIPipeRunner started, please be patient!\n"
+            for line in process.stdout:
+                log_file.write(line)
+                log_file.flush()
 
-            hb_interval = 5.0
-            last = time.time()
+            process.wait()
+            log_file.write(f"\n[ JIPipe exited with code {process.returncode} ]\n")
 
-            while True:
-                line = proc.stdout.readline()
-                if line:
-                    # drop startup noise & any HTTP headers
-                    if not info_rx.search(line):
-                        yield line
-                    last = time.time()
-                else:
-                    if proc.poll() is not None:
-                        break
-                    # heartbeat every 5s
-                    if time.time() - last >= hb_interval:
-                        yield "\n"
-                        last = time.time()
-                    else:
-                        time.sleep(0.1)
+    except Exception as error:
+        # Log any exceptions to the same log file
+        with open(log_file_path, 'a') as log_file:
+            log_file.write(f"\nERROR in JIPipe background job: {error}\n")
+        log.error("Error during JIPipe execution: %s", error)
 
-            code = proc.returncode if proc.returncode is not None else proc.wait()
-            yield f"\n[ JIPipe exited with code {code} ]\n"
+    finally:
+        # Clean up the temporary input directory; keep output for inspection
+        shutil.rmtree(temp_input)
 
-            shutil.rmtree(input_temp_dir)
-            logger.info("Cleaned up temp dirs")
 
-        resp = StreamingHttpResponse(stream(), content_type='text/plain')
-        # if you do have an Nginx or similar reverse‐proxy in front:
-        resp['Cache-Control'] = 'no-cache'
-        resp['X-Accel-Buffering'] = 'no'
-        return resp
+@require_POST
+@login_required()
+def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
+    """
+    Start a JIPipe job in the background.
 
-    except Exception as e:
-        # on error, fall back to your existing error handler
-        logger.exception("Unexpected error in process_datasets")
-        shutil.rmtree(input_temp_dir)
-        return Response({'error': str(e)}, status=500)
+    Expects a JSON payload describing the project graph.
+    Returns JSON with a unique job ID.
+
+    URL: JIPipeRunner/start_jipipe_job/
+    """
+    # Parse the incoming configuration
+    project_config = json.loads(request.body.decode('utf-8'))
+
+    # Always run as the default OMERO group
+    conn.SERVICE_OPTS.setOmeroGroup('0')
+
+    # Ensure there is a JIPipeResults project to store outputs
+    results_project = _get_or_create_results_project(conn)
+    results_project_id = int(results_project.getId())
+
+    # Assign dataset IDs for define-project-ids nodes
+    for node in project_config.get('graph', {}).get('nodes', {}).values():
+        alias = node.get('jipipe:alias-id', '').lower()
+        if 'define-project-ids' in alias:
+            node['dataset-ids'] = [results_project_id]
+
+    # Prepare the log file path and unique job identifier
+    job_uuid = uuid.uuid4().hex
+    log_file = os.path.join(LOG_DIR, f'{job_uuid}.log')
+
+    # Launch the background thread
+    threading.Thread(
+        target=_run_jipipe_thread,
+        args=(project_config, job_uuid, conn, log_file),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'job_id': job_uuid})
+
+
+@require_GET
+@login_required()
+def fetch_jipipe_logs(request, job_id: str, **kwargs) -> JsonResponse:
+    """
+    Return the status and accumulated logs for a running or finished JIPipe job.
+
+    URL: JIPipeRunner/fetch_jipipe_logs/<job_id>
+    """
+    log_file = os.path.join(LOG_DIR, f'{job_id}.log')
+
+    if not os.path.exists(log_file):
+        raise Http404(f'Job not found: {job_id}')
+
+    with open(log_file, 'r') as file_handle:
+        log_lines = file_handle.read().splitlines()
+
+    # Determine if the job finished by checking for the exit code message
+    finished = any('JIPipe exited with code' in line for line in log_lines[-3:])
+    status = 'finished' if finished else 'running'
+
+    return JsonResponse({'status': status, 'logs': log_lines})
 
 
 @login_required()
-def JIPipeRunner_index(request, project_id, conn=None, **kwargs):
+def jipipe_runner_index(request, project_id: int, conn=None, **kwargs) -> HttpResponse:
     """
-    Render the dataset input template for a given project.
+    Display the dataset input form for a given OMERO project.
     """
     return render(
         request,
@@ -258,9 +160,9 @@ def JIPipeRunner_index(request, project_id, conn=None, **kwargs):
 
 
 @login_required()
-def getJIPipeJSON(request, project_id, conn=None, **kwargs):
+def get_jipipe_config(request, project_id: int, conn=None, **kwargs) -> JsonResponse:
     """
-    Retrieve and return the JIPipe JSON annotation on a given OMERO project.
+    Fetch the JIPipe JSON configuration stored as a FileAnnotation on the project.
     """
     logger = logging.getLogger(__name__)
     conn.SERVICE_OPTS.setOmeroGroup('0')
@@ -269,39 +171,53 @@ def getJIPipeJSON(request, project_id, conn=None, **kwargs):
     if project is None:
         return HttpResponse(f'Project {project_id} not found.', status=404)
 
-    # Find first FileAnnotation
+    # Find the first FileAnnotation attached to the project
     annotation = next(
         (ann for ann in project.listAnnotations()
          if ann.OMERO_TYPE == omero.model.FileAnnotationI),
-        None
+        None,
     )
-    if not annotation:
-        return HttpResponse(f'No FileAnnotation found on Project {project_id}.', status=404)
 
-    # Read JSON bytes
+    if annotation is None:
+        return HttpResponse(
+            f'No JIPipe configuration found for project {project_id}.',
+            status=404,
+        )
+
     try:
-        data = b''.join(annotation.getFileInChunks())
-        text = data.decode('utf-8')
-        jip_json = json.loads(text)
-    except Exception as e:
-        logger.error("Failed to parse FileAnnotation JSON: %s", e)
-        return HttpResponse(f'Error parsing JSON: {e}', status=400)
+        # Read and parse the JSON data from the annotation
+        raw_bytes = b''.join(annotation.getFileInChunks())
+        config_text = raw_bytes.decode('utf-8')
+        config_data = json.loads(config_text)
+    except Exception as parse_error:
+        logger.error('Failed to parse JIPipe JSON: %s', parse_error)
+        return HttpResponse(
+            f'Error parsing JIPipe JSON: {parse_error}',
+            status=400,
+        )
 
-    return JsonResponse(jip_json, safe=False)
+    return JsonResponse(config_data, safe=False)
 
 
-# Helper functions
+# Helper: ensure the results project exists
 
-def _get_or_create_results_project(conn):
-    """
-    Return existing JIPipeResults project or create it if missing.
-    """
-    name = 'JIPipeResults'
-    project = conn.getObject('Project', attributes={'name': name})
-    if project:
-        return project
+def _get_or_create_results_project(conn) -> omero.gateway.ProjectWrapper:
+    project_name = 'JIPipeResults'
 
-    proj = omero.model.ProjectI()
-    proj.setName(rstring(name))
-    proj.setDescription(rstring('Project to save all JIPipe results'))
-    return conn.getUpdateService().saveAndReturnObject(proj, conn.SERVICE_OPTS)
+    # Attempt to find an existing project
+    existing = conn.getObject('Project', attributes={'name': project_name})
+    if existing:
+        return existing
+
+    # Create a new Project model and save it
+    new_project_model = omero.model.ProjectI()
+    new_project_model.setName(rstring(project_name))
+    new_project_model.setDescription(rstring('Project to save all JIPipe results'))
+
+    saved_model = conn.getUpdateService().saveAndReturnObject(
+        new_project_model,
+        conn.SERVICE_OPTS,
+    )
+
+    new_id = saved_model.getId().getValue()
+    return conn.getObject('Project', new_id)

@@ -1,184 +1,271 @@
-{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>JIPipeRunner Configuration</title>
-  <!-- Point to your external CSS -->
+  <!-- Link to external CSS for styling -->
   <link rel="stylesheet" href="{% static 'JIPipeRunner/css/jipipe_runner.css' %}">
 </head>
 <body>
-<div id="jipipe_runner_container">
-  <h1>JIPipeRunner Configuration</h1>
+  <div id="jipipe_runner_container">
+    <h1>JIPipeRunner Configuration</h1>
 
-  <section id="file_info">
-    <h2>Node Summary</h2>
-    <!-- Dynamically added summary -->
-  </section>
+    <!-- Section: Summary of node counts -->
+    <section id="file_info">
+      <h2>Node Summary</h2>
+      <!-- Total, input, and output node counts are inserted here -->
+    </section>
 
-  <section id="input">
-    <h2>Input Node Configuration</h2>
-    <p>Enter comma-separated dataset IDs for each input node:</p>
-    <!-- Dynamically added dataset inputs -->
-  </section>
+    <!-- Section: Input nodes (dataset IDs) -->
+    <section id="input">
+      <h2>Input Node Configuration</h2>
+      <p>Enter comma-separated dataset IDs for each input node:</p>
+      <!-- Input fields for dataset IDs will be generated here -->
+    </section>
 
-  <section id="parameters">
-    <h2>Parameter Configuration</h2>
-    <p>Enter parameter values below:</p>
-    <!-- Dynamically added parameters -->
-  </section>
+    <!-- Section: Custom parameters -->
+    <section id="parameters">
+      <h2>Parameter Configuration</h2>
+      <p>Enter parameter values below:</p>
+      <!-- Parameter input fields will be generated here -->
+    </section>
 
-  <div style="text-align: center; margin-bottom: 20px;">
-    <button id="startRunnerBtn">Start JIPipeRunner</button>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <button id="startRunnerBtn">Start JIPipeRunner</button>
+    </div>
+
+    <!-- Section: Job output logs -->
+    <section id="results">
+      <div class="log-container">
+        <pre id="logOutput"></pre>
+      </div>
+    </section>
   </div>
 
-  <section id="results">
-    <pre id="logOutput"
-         style="white-space: pre-wrap; margin:0; padding:10px; border:1px solid #ccc; height:400px; overflow:auto;">
-    </pre>
-  </section>
-</div>
+  <script>
+    (async function () {
+      // Mapping from node UUID to its corresponding parameter key
+      const paramKeyByNodeUuid = {};
 
-<script>
-(async function() {
-  // Map of node UUID to its parameter key
-  const uuidToParamKey = {};
-  let pipelineConfig = null;
+      // Store the fetched pipeline configuration
+      let pipelineConfig = null;
 
-  // CSRF helper
-  function getCookie(name) {
-    let v = null;
-    document.cookie.split(";").forEach(c => {
-      const [k, val] = c.trim().split("=");
-      if (k === name) v = decodeURIComponent(val);
-    });
-    return v;
-  }
-  const csrftoken = getCookie("csrftoken");
-
-  // Fetch the JIPipe JSON for the given project
-  async function fetchPipelineConfig(projectId) {
-    const resp = await fetch(`/JIPipeRunner/getJIPipeJSON/${projectId}/json/`);
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${errText}`);
-    }
-    return resp.json();
-  }
-
-  // Render summary of total, input, and output nodes
-  function renderNodeSummary(nodes) {
-    const info = document.getElementById('file_info');
-    const all = Object.values(nodes);
-    info.innerHTML += `<p>Total nodes: ${all.length}</p>`;
-    info.innerHTML += `<p>Input nodes: ${all.filter(n => n['jipipe:alias-id']?.includes('define-dataset-ids')).length}</p>`;
-    info.innerHTML += `<p>Output nodes: ${all.filter(n => n['jipipe:alias-id']?.includes('upload')).length}</p>`;
-  }
-
-  // Create input fields for dataset IDs
-  function renderInputNodes(nodes) {
-    const container = document.getElementById('input');
-    Object.entries(nodes).forEach(([uuid, node]) => {
-      if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
-        const row = document.createElement('div');
-        row.className = 'input-row';
-        const inputId = `dataset-id-${uuid}`;
-        const placeholder = (node['dataset-ids'] || []).join(', ');
-        row.innerHTML = `
-          <label for="${inputId}">${node['jipipe:node:name']}:</label>
-          <input type="text" id="${inputId}" name="datasetIds" placeholder="${placeholder}">
-        `;
-        container.appendChild(row);
+      /**
+       * Utility: Read a cookie value by name (for CSRF token retrieval)
+       * @param {string} name - Name of the cookie
+       * @returns {string|null} - Value of the cookie or null if not found
+       */
+      function getCookieValue(name) {
+        let cookieValue = null;
+        document.cookie.split(';').forEach(cookie => {
+          const [key, val] = cookie.trim().split('=');
+          if (key === name) {
+            cookieValue = decodeURIComponent(val);
+          }
+        });
+        return cookieValue;
       }
-    });
-  }
 
-  // Create input fields for user parameters
-  function renderParameters(metadata, nodes) {
-    const container = document.getElementById('parameters');
-    const groups = metadata['exported-parameters']['parameter-reference-groups'];
-    groups.forEach(group => {
-      group.content.forEach(item => {
-        const [uuid, paramKey] = item.path.split('/');
-        uuidToParamKey[uuid] = paramKey;
-        const defaultVal = nodes[uuid]?.[paramKey] || '';
-        const row = document.createElement('div');
-        row.className = 'input-row';
-        row.innerHTML = `
-          <label for="param-${uuid}">${item['custom-name']}:</label>
-          <input type="text" id="param-${uuid}" name="${item['custom-name']}" placeholder="${defaultVal}">
-        `;
-        container.appendChild(row);
-      });
-    });
-  }
+      const csrftoken = getCookieValue('csrftoken');
 
-  // NEW: start the job and poll logs
-  async function processDatasets() {
-    const output = document.getElementById('logOutput');
-    output.textContent = '';  // clear old
 
-    // 1) Start background job
-    const startResp = await fetch('/JIPipeRunner/start_job/', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': csrftoken
-      },
-      body: JSON.stringify(pipelineConfig)
-    });
-    if (!startResp.ok) {
-      const txt = await startResp.text();
-      output.textContent = `Error ${startResp.status}: ${txt}`;
-      return;
-    }
-    const { job_id } = await startResp.json();
-
-    // 2) Poll logs every 2 seconds
-    let finished = false;
-    let lastLen = 0;
-    while (!finished) {
-      const logResp = await fetch(`/JIPipeRunner/fetch_logs/${job_id}/`, {
-        credentials: 'same-origin'
-      });
-      if (!logResp.ok) {
-        output.textContent += `\nError fetching logs: ${logResp.status}`;
-        return;
+      /**
+       * Fetch the JIPipe pipeline configuration JSON for the given project ID
+       * @param {string} projectId
+       * @returns {Promise<Object>} Parsed JSON of pipeline config
+       * @throws Will throw an error if the network request fails
+       */
+      async function fetchPipelineConfig(projectId) {
+        const response = await fetch(`/JIPipeRunner/getJIPipeJSON/${projectId}/json/`);
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        return response.json();
       }
-      const { status, logs } = await logResp.json();
-      if (logs.length > lastLen) {
-        output.textContent += logs.slice(lastLen).join('\n') + '\n';
-        output.scrollTop = output.scrollHeight;
-        lastLen = logs.length;
+
+      /**
+       * Display counts of total, input, and output nodes
+       * @param {Object} nodesMap - Map of node UUIDs to node objects
+       */
+      function displayNodeSummary(nodesMap) {
+        const container = document.getElementById('file_info');
+        const allNodes = Object.values(nodesMap);
+
+        // Count nodes by alias patterns
+        const inputCount = allNodes.filter(node => node['jipipe:alias-id']?.includes('define-dataset-ids')).length;
+        const outputCount = allNodes.filter(node => node['jipipe:alias-id']?.includes('upload')).length;
+
+        container.innerHTML += `<p>Total nodes: ${allNodes.length}</p>`;
+        container.innerHTML += `<p>Input nodes: ${inputCount}</p>`;
+        container.innerHTML += `<p>Output nodes: ${outputCount}</p>`;
       }
-      finished = (status === 'finished');
-      if (!finished) await new Promise(r => setTimeout(r, 2000));
-    }
-  }
 
-  // Immediate initialization (no DOMContentLoaded)
-  try {
-    const projectId = '{{ project_id }}';
-    // Attach click handler
-    document.getElementById('startRunnerBtn')
-      .addEventListener('click', e => { e.preventDefault(); processDatasets(); });
+      /**
+       * Generate input fields for each dataset-definition node
+       * @param {Object} nodesMap
+       */
+      function createDatasetInputFields(nodesMap) {
+        const container = document.getElementById('input');
 
-    // Fetch and render configuration
-    pipelineConfig = await fetchPipelineConfig(projectId);
-    const nodes = pipelineConfig.graph.nodes;
-    renderNodeSummary(nodes);
-    renderInputNodes(nodes);
-    renderParameters(
-      pipelineConfig['additional-metadata']['org.hkijena.jipipe:pipeline-parameters'],
-      nodes
-    );
-  } catch (err) {
-    const container = document.getElementById('jipipe_runner_container');
-    container.innerHTML = `<p class="error">Error loading configuration: ${err.message}</p>`;
-    console.error(err);
-  }
-})();
-</script>
+        Object.entries(nodesMap).forEach(([uuid, node]) => {
+          if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
+            const row = document.createElement('div');
+            row.className = 'input-row';
+
+            const inputId = `dataset-id-${uuid}`;
+            const existingIds = (node['dataset-ids'] || []).join(', ');
+
+            row.innerHTML = `
+              <label for="${inputId}">${node['jipipe:node:name']}:</label>
+              <input type="text"
+                     id="${inputId}"
+                     name="datasetIds"
+                     placeholder="${existingIds}">
+            `;
+
+            container.appendChild(row);
+          }
+        });
+      }
+
+      /**
+       * Generate input fields for user-defined parameters
+       * @param {Object} paramsMetadata - Metadata about exported parameters
+       * @param {Object} nodesMap
+       */
+      function createParameterFields(paramsMetadata, nodesMap) {
+        const container = document.getElementById('parameters');
+        const groups = paramsMetadata['exported-parameters']['parameter-reference-groups'];
+
+        groups.forEach(group => {
+          group.content.forEach(item => {
+            const [uuid, paramKey] = item.path.split('/');
+            paramKeyByNodeUuid[uuid] = paramKey;
+
+            const defaultValue = nodesMap[uuid]?.[paramKey] || '';
+            const fieldId = `param-${uuid}`;
+
+            const row = document.createElement('div');
+            row.className = 'input-row';
+
+            row.innerHTML = `
+              <label for="${fieldId}">${item['custom-name']}:</label>
+              <input type="text"
+                     id="${fieldId}"
+                     name="${item['custom-name']}"
+                     placeholder="${defaultValue}">
+            `;
+
+            container.appendChild(row);
+          });
+        });
+      }
+
+      /**
+       * Start the JIPipeRunner job and stream logs to the UI
+       */
+      async function executePipelineJob() {
+        const logOutput = document.getElementById('logOutput');
+        const logContainer = logOutput.parentElement;
+
+        // Clear any previous logs
+        logOutput.textContent = '';
+
+        // Update pipelineConfig with user inputs
+        Object.entries(pipelineConfig.graph.nodes).forEach(([uuid, node]) => {
+          // Update dataset IDs
+          if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
+            const inputValue = document.getElementById(`dataset-id-${uuid}`).value.trim();
+            if (inputValue) {
+              node['dataset-ids'] = inputValue.split(',').map(v => v.trim());
+            }
+          }
+
+          // Update custom parameters
+          if (uuid in paramKeyByNodeUuid) {
+            const userInput = document.getElementById(`param-${uuid}`).value.trim();
+            if (userInput) {
+              node[paramKeyByNodeUuid[uuid]] = userInput;
+            }
+          }
+        });
+
+        // Send configuration to server to initiate job
+        const response = await fetch('/JIPipeRunner/jipipe_start_job/', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken
+          },
+          body: JSON.stringify(pipelineConfig)
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          logOutput.textContent = `Error ${response.status}: ${errText}`;
+          return;
+        }
+
+        const { job_id: jobId } = await response.json();
+
+        // Poll for logs until the job is finished
+        let finished = false;
+        let previousLogLength = 0;
+
+        while (!finished) {
+          const logResp = await fetch(`/JIPipeRunner/fetch_jipipe_logs/${jobId}/`, { credentials: 'same-origin' });
+          if (!logResp.ok) {
+            logOutput.textContent += `\nError fetching logs: ${logResp.status}`;
+            return;
+          }
+
+          const { status, logs } = await logResp.json();
+
+          // Append new log lines
+          if (logs.length > previousLogLength) {
+            const newLines = logs.slice(previousLogLength).join('\n') + '\n';
+            logOutput.textContent += newLines;
+            logContainer.scrollTop = logContainer.scrollHeight;
+            previousLogLength = logs.length;
+          }
+
+          finished = (status === 'finished');
+          if (!finished) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+      }
+
+      // Initialization: fetch config and render dynamic UI
+      try {
+        const projectId = '{{ project_id }}';
+
+        // Attach click handler to the Start button
+        document.getElementById('startRunnerBtn')
+          .addEventListener('click', event => {
+            event.preventDefault();
+            executePipelineJob();
+          });
+
+        // Load pipeline JSON and render UI
+        pipelineConfig = await fetchPipelineConfig(projectId);
+        const nodesMap = pipelineConfig.graph.nodes;
+
+        displayNodeSummary(nodesMap);
+        createDatasetInputFields(nodesMap);
+        createParameterFields(
+          pipelineConfig['additional-metadata']['org.hkijena.jipipe:pipeline-parameters'],
+          nodesMap
+        );
+
+      } catch (error) {
+        const container = document.getElementById('jipipe_runner_container');
+        container.innerHTML = `<p class="error">Error loading configuration: ${error.message}</p>`;
+        console.error(error);
+      }
+    })();
+  </script>
 </body>
 </html>

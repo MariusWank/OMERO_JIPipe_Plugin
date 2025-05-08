@@ -1,38 +1,146 @@
-/* Container styling */
+:root {
+  /* Color palette */
+  --color-bg: #ffffff;
+  --color-panel-bg: #fafafa;
+  --color-border: #e0e0e0;
+  --color-text: #333333;
+  --color-button: #25ae03;
+  --color-button-hover: #006a15;
+  --color-error: #d32f2f;
+
+  /* Typography (scaled down by ~10%) */
+  --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --font-size-base: 11px;
+  --font-size-label: 0.85rem;
+
+  /* Spacing scale (reduced) */
+  --space-sm: 0.25rem;
+  --space-md: 0.75rem;
+  --space-lg: 1rem;
+}
+
+#jipipe_form_container {
+  box-sizing: border-box;
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  line-height: 1.4;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+/* Container Flex Layout */
 #jipipe_runner_container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 20px;
-    font-family: sans-serif;
-  }
-  
-  section {
-    margin-bottom: 20px;
-  }
-  
-  .input-row {
-    display: flex;
-    align-items: center;
-    margin-bottom: 10px;
-  }
-  
-  .input-row label {
-    margin-right: 10px;
-    min-width: 180px;
-    font-weight: bold;
-  }
-  
-  button {
-    padding: 10px 20px;
-    font-size: 1rem;
-    cursor: pointer;
-  }
-  
-  .error {
-    color: red;
-  }
-  
-  .dot-animation {
-    font-style: italic;
-  }
-  
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--space-lg);
+}
+
+/* Section panels */
+#jipipe_form_container section {
+  background: var(--color-panel-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+#jipipe_form_container h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-sm);
+  align-self: center;
+}
+
+/* Section titles */
+#jipipe_form_container section h2 {
+  margin-bottom: var(--space-sm);
+  font-size: 1.1rem;
+}
+
+#jipipe_form_container .input-row {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-sm);
+}
+
+#jipipe_form_container .input-row label {
+  margin-bottom: var(--space-sm);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+}
+
+#jipipe_form_container .input-row input {
+  width: 100%;
+  max-width: 350px;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: var(--font-size-base);
+}
+
+/* Button styling */
+#jipipe_form_container #startRunnerBtn {
+  display: block;
+  margin: 0 auto var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background-color: var(--color-button);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  text-align: center;
+}
+
+#jipipe_form_container #startRunnerBtn:hover,
+#jipipe_form_container #startRunnerBtn:focus {
+  background-color: var(--color-button-hover);
+  outline: none;
+}
+
+#jipipe_form_container .log-container {
+  min-height: 250px;
+  max-height: 250px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#jipipe_form_container #logOutput {
+  min-height: 225px;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  margin: 0;
+}
+
+/* Error text */
+#jipipe_form_container .error {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+/* Dot animation */
+#jipipe_form_container .dot-animation {
+  font-style: italic;
+}
+
+#right_panel {
+  width: 400px;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  overflow: auto;
+  box-shadow: inset 1px 0 0 hsl(210,10%,85%);
+}
+
+#center_container {
+  right: 399px;
+}
