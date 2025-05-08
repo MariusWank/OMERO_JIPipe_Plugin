@@ -1,0 +1,38 @@
+/* Container styling */
+#jipipe_runner_container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: sans-serif;
+  }
+  
+  section {
+    margin-bottom: 20px;
+  }
+  
+  .input-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  
+  .input-row label {
+    margin-right: 10px;
+    min-width: 180px;
+    font-weight: bold;
+  }
+  
+  button {
+    padding: 10px 20px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  
+  .error {
+    color: red;
+  }
+  
+  .dot-animation {
+    font-style: italic;
+  }
+  
