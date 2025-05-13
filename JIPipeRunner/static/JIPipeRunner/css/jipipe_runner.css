@@ -1,37 +1,38 @@
 :root {
   /* Color palette */
-  --color-bg: #ffffff;
-  --color-panel-bg: #fafafa;
+  --color-bg: #fff;
   --color-border: #e0e0e0;
-  --color-text: #333333;
-  --color-button: #25ae03;
-  --color-button-hover: #006a15;
+  --color-start-button: #25ae03;
+  --color-start-button-hover: #006a15;
+  --color-stop-button: #eb2b2b;
+  --color-stop-button-hover: #891717;
   --color-error: #d32f2f;
+  --color-panel-bg: #fafafa;
+  --color-text: #333;
 
-  /* Typography (scaled down by ~10%) */
-  --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  --font-size-base: 11px;
-  --font-size-label: 0.85rem;
-
-  /* Spacing scale (reduced) */
+  /* Spacing scale */
   --space-sm: 0.25rem;
   --space-md: 0.75rem;
   --space-lg: 1rem;
+
+  /* Typography (scaled down ~10%) */
+  --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --font-size-base: 11px;
+  --font-size-label: 0.85rem;
 }
 
 #jipipe_form_container {
+  background-color: var(--color-bg);
   box-sizing: border-box;
-  margin: 0;
+  color: var(--color-text);
   font-family: var(--font-family);
   font-size: var(--font-size-base);
-  color: var(--color-text);
-  background-color: var(--color-bg);
   line-height: 1.4;
-  flex: 1 1 auto;
+  margin: 0;
   overflow-y: auto;
+  flex: 1 1 auto;
 }
 
-/* Container Flex Layout */
 #jipipe_runner_container {
   display: flex;
   flex-direction: column;
@@ -39,26 +40,24 @@
   padding: var(--space-lg);
 }
 
-/* Section panels */
 #jipipe_form_container section {
   background: var(--color-panel-bg);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  padding: var(--space-md);
   margin-bottom: var(--space-lg);
+  padding: var(--space-md);
 }
 
 #jipipe_form_container h1 {
+  align-self: center;
   font-size: 1.6rem;
   font-weight: 600;
   margin: 0 0 var(--space-sm);
-  align-self: center;
 }
 
-/* Section titles */
 #jipipe_form_container section h2 {
-  margin-bottom: var(--space-sm);
   font-size: 1.1rem;
+  margin-bottom: var(--space-sm);
 }
 
 #jipipe_form_container .input-row {
@@ -68,77 +67,115 @@
 }
 
 #jipipe_form_container .input-row label {
-  margin-bottom: var(--space-sm);
   font-size: var(--font-size-label);
   font-weight: 600;
+  margin-bottom: var(--space-sm);
 }
 
 #jipipe_form_container .input-row input {
-  width: 100%;
-  max-width: 350px;
-  padding: var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: 3px;
   font-size: var(--font-size-base);
+  max-width: 350px;
+  padding: var(--space-sm);
+  width: 100%;
 }
 
-/* Button styling */
 #jipipe_form_container #startRunnerBtn {
-  display: block;
-  margin: 0 auto var(--space-lg);
-  padding: var(--space-sm) var(--space-md);
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #fff;
-  background-color: var(--color-button);
+  background-color: var(--color-start-button);
   border: none;
   border-radius: 3px;
+  color: #fff;
   cursor: pointer;
-  transition: background-color 0.2s ease-in-out;
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 auto var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
   text-align: center;
+  transition: background-color 0.2s ease-in-out;
 }
 
-#jipipe_form_container #startRunnerBtn:hover,
-#jipipe_form_container #startRunnerBtn:focus {
-  background-color: var(--color-button-hover);
+#jipipe_form_container #startRunnerBtn:hover {
+  background-color: var(--color-start-button-hover);
+  outline: none;
+}
+
+#jipipe_form_container #stopRunnerBtn {
+  background-color: var(--color-stop-button);
+  border: none;
+  border-radius: 3px;
+  color: #fff;
+  cursor: pointer;
+  display: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 auto var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  text-align: center;
+  transition: background-color 0.2s ease-in-out;
+}
+
+#jipipe_form_container #stopRunnerBtn:hover {
+  background-color: var(--color-stop-button-hover);
   outline: none;
 }
 
 #jipipe_form_container .log-container {
-  min-height: 250px;
   max-height: 250px;
-  overflow-y: auto;
+  min-height: 250px;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 #jipipe_form_container #logOutput {
+  border: 1px solid var(--color-border);
+  margin: 0;
   min-height: 225px;
   overflow-x: auto;
   overflow-y: auto;
-  white-space: pre;
   padding: 0.5rem;
-  border: 1px solid #ccc;
-  margin: 0;
+  white-space: pre;
 }
 
-/* Error text */
 #jipipe_form_container .error {
   color: var(--color-error);
   font-weight: 600;
 }
 
-/* Dot animation */
 #jipipe_form_container .dot-animation {
   font-style: italic;
 }
 
+/* Red cross button styling */
+.cancel-btn {
+  background: none;
+  border: none;
+  color: red;
+  font-size: 1.2em;
+  cursor: pointer;
+  margin-left: 8px;
+}
+#running-jobs ul {
+  list-style: none;
+  padding: 0;
+}
+#running-jobs li {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+#running-jobs span.job-id {
+  font-family: monospace;
+}
+
 #right_panel {
-  width: 400px;
-  right: 0;
-  top: 0;
+  box-shadow: inset 1px 0 0 hsl(210, 10%, 85%);
   bottom: 0;
   overflow: auto;
-  box-shadow: inset 1px 0 0 hsl(210,10%,85%);
+  right: 0;
+  top: 0;
+  width: 400px;
 }
 
 #center_container {

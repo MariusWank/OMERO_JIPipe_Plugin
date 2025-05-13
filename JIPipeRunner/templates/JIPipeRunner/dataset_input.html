@@ -10,6 +10,14 @@
   <div id="jipipe_runner_container">
     <h1>JIPipeRunner Configuration</h1>
 
+    <!-- Section: Running jobs -->
+    <section id="running-jobs">
+      <h2>Running Jobs</h2>
+      <ul id="runningJobsList">
+        <!-- Dynamically populated -->
+      </ul>
+    </section>
+
     <!-- Section: Summary of node counts -->
     <section id="file_info">
       <h2>Node Summary</h2>
@@ -32,6 +40,7 @@
 
     <div style="text-align: center; margin-bottom: 20px;">
       <button id="startRunnerBtn">Start JIPipeRunner</button>
+      <button id="stopRunnerBtn" style="display:none;">Stop JIPipeRunner</button>
     </div>
 
     <!-- Section: Job output logs -->
@@ -44,17 +53,10 @@
 
   <script>
     (async function () {
-      // Mapping from node UUID to its corresponding parameter key
       const paramKeyByNodeUuid = {};
-
-      // Store the fetched pipeline configuration
       let pipelineConfig = null;
+      const activeJobs = new Set();
 
-      /**
-       * Utility: Read a cookie value by name (for CSRF token retrieval)
-       * @param {string} name - Name of the cookie
-       * @returns {string|null} - Value of the cookie or null if not found
-       */
       function getCookieValue(name) {
         let cookieValue = null;
         document.cookie.split(';').forEach(cookie => {
@@ -65,18 +67,58 @@
         });
         return cookieValue;
       }
-
       const csrftoken = getCookieValue('csrftoken');
 
+      async function loadRunningJobs() {
+      try {
+        const resp = await fetch('/JIPipeRunner/list_jipipe_jobs/', {
+          credentials: 'same-origin'
+        });
+        if (resp.ok) {
+          const { job_ids } = await resp.json();
+          job_ids.forEach(jobId => addRunningJob(jobId));
+        } else {
+          console.warn('Unable to load running jobs:', resp.status);
+        }
+      } catch (err) {
+        console.error('Error fetching running jobs:', err);
+      }
+    }
+      await loadRunningJobs();
 
       /**
-       * Fetch the JIPipe pipeline configuration JSON for the given project ID
-       * @param {string} projectId
-       * @returns {Promise<Object>} Parsed JSON of pipeline config
-       * @throws Will throw an error if the network request fails
+       * Add a job entry to the running jobs list
        */
+      function addRunningJob(jobId) {
+        if (activeJobs.has(jobId)) return;
+        activeJobs.add(jobId);
+        const list = document.getElementById('runningJobsList');
+        const li = document.createElement('li');
+        li.id = `job-${jobId}`;
+        li.innerHTML = `
+          <span class="job-id">${jobId}</span>
+          <button class="cancel-btn" title="Cancel job">&#10006;</button>
+        `;
+        const btn = li.querySelector('.cancel-btn');
+        btn.addEventListener('click', () => {
+          if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
+            stopPipelineJob(jobId);
+            removeRunningJob(jobId);
+          }
+        });
+        list.appendChild(li);
+      }
+      /**
+       * Remove a job entry from the running jobs list
+       */
+      function removeRunningJob(jobId) {
+        activeJobs.delete(jobId);
+        const el = document.getElementById(`job-${jobId}`);
+        if (el) el.remove();
+      }
+      
       async function fetchPipelineConfig(projectId) {
-        const response = await fetch(`/JIPipeRunner/getJIPipeJSON/${projectId}/json/`);
+        const response = await fetch(`/JIPipeRunner/get_jipipe_config/${projectId}/json/`);
         if (!response.ok) {
           const errorText = await response.text();
           throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -84,38 +126,24 @@
         return response.json();
       }
 
-      /**
-       * Display counts of total, input, and output nodes
-       * @param {Object} nodesMap - Map of node UUIDs to node objects
-       */
       function displayNodeSummary(nodesMap) {
         const container = document.getElementById('file_info');
         const allNodes = Object.values(nodesMap);
-
-        // Count nodes by alias patterns
         const inputCount = allNodes.filter(node => node['jipipe:alias-id']?.includes('define-dataset-ids')).length;
         const outputCount = allNodes.filter(node => node['jipipe:alias-id']?.includes('upload')).length;
-
         container.innerHTML += `<p>Total nodes: ${allNodes.length}</p>`;
         container.innerHTML += `<p>Input nodes: ${inputCount}</p>`;
         container.innerHTML += `<p>Output nodes: ${outputCount}</p>`;
       }
 
-      /**
-       * Generate input fields for each dataset-definition node
-       * @param {Object} nodesMap
-       */
       function createDatasetInputFields(nodesMap) {
         const container = document.getElementById('input');
-
         Object.entries(nodesMap).forEach(([uuid, node]) => {
           if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
             const row = document.createElement('div');
             row.className = 'input-row';
-
             const inputId = `dataset-id-${uuid}`;
             const existingIds = (node['dataset-ids'] || []).join(', ');
-
             row.innerHTML = `
               <label for="${inputId}">${node['jipipe:node:name']}:</label>
               <input type="text"
@@ -123,32 +151,22 @@
                      name="datasetIds"
                      placeholder="${existingIds}">
             `;
-
             container.appendChild(row);
           }
         });
       }
 
-      /**
-       * Generate input fields for user-defined parameters
-       * @param {Object} paramsMetadata - Metadata about exported parameters
-       * @param {Object} nodesMap
-       */
       function createParameterFields(paramsMetadata, nodesMap) {
         const container = document.getElementById('parameters');
         const groups = paramsMetadata['exported-parameters']['parameter-reference-groups'];
-
         groups.forEach(group => {
           group.content.forEach(item => {
             const [uuid, paramKey] = item.path.split('/');
             paramKeyByNodeUuid[uuid] = paramKey;
-
             const defaultValue = nodesMap[uuid]?.[paramKey] || '';
             const fieldId = `param-${uuid}`;
-
             const row = document.createElement('div');
             row.className = 'input-row';
-
             row.innerHTML = `
               <label for="${fieldId}">${item['custom-name']}:</label>
               <input type="text"
@@ -156,49 +174,51 @@
                      name="${item['custom-name']}"
                      placeholder="${defaultValue}">
             `;
-
             container.appendChild(row);
           });
         });
       }
 
-      /**
-       * Start the JIPipeRunner job and stream logs to the UI
-       */
+      async function stopPipelineJob(jobId) {
+        const logOutput = document.getElementById('logOutput');
+        try {
+          const resp = await fetch('/JIPipeRunner/stop_jipipe_job/', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ job_id: jobId })
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            logOutput.textContent += `\nFailed to stop job ${jobId}: ${resp.status}\n${text}`;
+            return;
+          }
+          logOutput.textContent += `\nCanceled job ${jobId}`;
+        } catch (err) {
+          console.error('Error while calling stop_jipipe_job:', err);
+        }
+      }
+
       async function executePipelineJob() {
         const logOutput = document.getElementById('logOutput');
+        const start_button = document.getElementById('startRunnerBtn');
+        const stop_button = document.getElementById('stopRunnerBtn');
         const logContainer = logOutput.parentElement;
-
-        // Clear any previous logs
         logOutput.textContent = '';
 
-        // Update pipelineConfig with user inputs
         Object.entries(pipelineConfig.graph.nodes).forEach(([uuid, node]) => {
-          // Update dataset IDs
           if (node['jipipe:alias-id']?.includes('define-dataset-ids')) {
             const inputValue = document.getElementById(`dataset-id-${uuid}`).value.trim();
-            if (inputValue) {
-              node['dataset-ids'] = inputValue.split(',').map(v => v.trim());
-            }
+            if (inputValue) node['dataset-ids'] = inputValue.split(',').map(v => v.trim());
           }
-
-          // Update custom parameters
           if (uuid in paramKeyByNodeUuid) {
             const userInput = document.getElementById(`param-${uuid}`).value.trim();
-            if (userInput) {
-              node[paramKeyByNodeUuid[uuid]] = userInput;
-            }
+            if (userInput) node[paramKeyByNodeUuid[uuid]] = userInput;
           }
         });
 
-        // Send configuration to server to initiate job
         const response = await fetch('/JIPipeRunner/jipipe_start_job/', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrftoken
-          },
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
           body: JSON.stringify(pipelineConfig)
         });
 
@@ -208,9 +228,22 @@
           return;
         }
 
-        const { job_id: jobId } = await response.json();
+        start_button.style.display = 'none';
+        stop_button.style.display = 'block';
 
-        // Poll for logs until the job is finished
+        const { job_id: jobId } = await response.json();
+        addRunningJob(jobId);
+
+        stop_button.replaceWith(stop_button.cloneNode(true));
+        const freshStopBtn = document.getElementById('stopRunnerBtn');
+        freshStopBtn.addEventListener('click', event => {
+          event.preventDefault();
+          if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
+            stopPipelineJob(jobId);
+            removeRunningJob(jobId);
+          }
+        });
+
         let finished = false;
         let previousLogLength = 0;
 
@@ -220,46 +253,38 @@
             logOutput.textContent += `\nError fetching logs: ${logResp.status}`;
             return;
           }
-
           const { status, logs } = await logResp.json();
-
-          // Append new log lines
           if (logs.length > previousLogLength) {
             const newLines = logs.slice(previousLogLength).join('\n') + '\n';
             logOutput.textContent += newLines;
             logContainer.scrollTop = logContainer.scrollHeight;
             previousLogLength = logs.length;
           }
-
           finished = (status === 'finished');
-          if (!finished) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
+          if (!finished) await new Promise(resolve => setTimeout(resolve, 2000));
         }
+
+        removeRunningJob(jobId);
+        freshStopBtn.style.display = 'none';
+        start_button.style.display = 'block';
       }
 
-      // Initialization: fetch config and render dynamic UI
+      // Initialization: fetch config and render UI
       try {
         const projectId = '{{ project_id }}';
+        document.getElementById('startRunnerBtn').addEventListener('click', event => {
+          event.preventDefault();
+          executePipelineJob();
+        });
 
-        // Attach click handler to the Start button
-        document.getElementById('startRunnerBtn')
-          .addEventListener('click', event => {
-            event.preventDefault();
-            executePipelineJob();
-          });
-
-        // Load pipeline JSON and render UI
         pipelineConfig = await fetchPipelineConfig(projectId);
         const nodesMap = pipelineConfig.graph.nodes;
-
         displayNodeSummary(nodesMap);
         createDatasetInputFields(nodesMap);
         createParameterFields(
           pipelineConfig['additional-metadata']['org.hkijena.jipipe:pipeline-parameters'],
           nodesMap
         );
-
       } catch (error) {
         const container = document.getElementById('jipipe_runner_container');
         container.innerHTML = `<p class="error">Error loading configuration: ${error.message}</p>`;

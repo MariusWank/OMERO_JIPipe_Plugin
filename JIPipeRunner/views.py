@@ -2,14 +2,17 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 import uuid
 
 from pathlib import Path
+from typing import Optional
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -23,6 +26,8 @@ from omeroweb.decorators import login_required
 LOG_DIR = getattr(settings, 'JIPIPE_LOG_ROOT', '/tmp/jipipe_logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# Time (in seconds) to keep PIDs in cache before expiring (None == never expire)
+CACHE_TIMEOUT: Optional[int] = None
 
 def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file_path: str) -> None:
     """
@@ -63,7 +68,11 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                preexec_fn=os.setsid,
             )
+
+            # Store its PID in Redis
+            cache.set(job_uuid, process.pid, timeout=CACHE_TIMEOUT)
 
             for line in process.stdout:
                 log_file.write(line)
@@ -79,8 +88,15 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
         log.error("Error during JIPipe execution: %s", error)
 
     finally:
-        # Clean up the temporary input directory; keep output for inspection
+        # Clean up the temporary input directory and delete the PID from cache
+        cache.delete(job_uuid)
+        owner = omero_conn.getUser().getName()
+        user_key = f"active_jipipe_jobs_{owner}"
+        active = set(cache.get(user_key, []))
+        active.discard(job_uuid)
+        cache.set(user_key, active, timeout=CACHE_TIMEOUT)
         shutil.rmtree(temp_input)
+        shutil.rmtree(temp_output)
 
 
 @require_POST
@@ -114,6 +130,12 @@ def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
     job_uuid = uuid.uuid4().hex
     log_file = os.path.join(LOG_DIR, f'{job_uuid}.log')
 
+    owner = conn.getUser().getName()
+    user_key = f"active_jipipe_jobs_{owner}"
+    active = set(cache.get(user_key, []))
+    active.add(job_uuid)
+    cache.set(user_key, active, timeout=CACHE_TIMEOUT)
+
     # Launch the background thread
     threading.Thread(
         target=_run_jipipe_thread,
@@ -123,6 +145,48 @@ def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
 
     return JsonResponse({'job_id': job_uuid})
 
+@require_POST
+@login_required()
+def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
+    """
+    Stop a running JIPipe job by job_id.  
+    Expects JSON: { "job_id": "<uuid>" }
+    """
+    try:
+        data = json.loads(request.body)
+        job_id = data.get('job_id')
+        if not job_id:
+            return JsonResponse({'error': 'Missing job_id'}, status=400)
+
+        pid = cache.get(job_id)
+        if not pid:
+            return JsonResponse({'error': 'Job not found or already finished'}, status=404)
+        
+        owner = conn.getUser().getName()
+        user_key = f"active_jipipe_jobs_{owner}"
+        active = set(cache.get(user_key, []))
+        if job_id not in active:
+            return JsonResponse({'error': 'Job not found or not owned by you'}, status=404)
+
+        # Send SIGTERM to the process group
+        os.killpg(pid, signal.SIGTERM)
+        cache.delete(job_id)
+
+        active.discard(job_id)
+        cache.set(user_key, active, timeout=CACHE_TIMEOUT)
+
+        return JsonResponse({'status': 'terminated', 'job_id': job_id})
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+@require_GET
+@login_required()
+def list_jipipe_jobs(request, conn=None, **kwargs):
+    owner = conn.getUser().getName()
+    user_key = f"active_jipipe_jobs_{owner}"
+    job_ids = cache.get(user_key, [])
+    return JsonResponse({'job_ids': list(job_ids)})
 
 @require_GET
 @login_required()
