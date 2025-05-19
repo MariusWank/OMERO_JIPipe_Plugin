@@ -45,7 +45,14 @@ Should there be any errors please refer to the official [OMERO documentation](ht
 
 ## User guide
 
-After the installation is completed, you can login to your OMERO database. If the installation was successful, you should see a grayed-out tab called **JIPipeRunner** in the right panel. After [getting started](#getting-started), check the remaining entries of the user guide to learn about the different sections within the plugin.
+After the installation is completed, you can login to your OMERO database. If the installation was successful, you should see a grayed-out tab called ***JIPipeRunner*** in the right panel. 
+
+<p align="center">
+  <img src="./assets/images/TabPanel.png"/>
+</p>
+
+
+After [getting started](#getting-started), check the remaining entries of the user guide to learn about the different sections within the plugin.
 
 ### Getting started
 
@@ -53,25 +60,50 @@ Once you select a project from the left panel the plugin tab becomes available. 
 
 > <p class="error" style=color:#d32f2f>Error loading configuration: HTTP 404: No JIPipe configuration found for project {project_id}.</p>
 
-To start using the plugin, go to **General** **->** **Attachments** in the right panel of your selected project. Click the **+** to attach a .jip file to the project that adheres to the [pipeline design constraints](#pipeline-design-constraints). You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
+
+
+
+<div style="display: flex; align-items: flex-start;">
+  <div style="flex: 1; padding-right: 10px;">
+    <p>
+      To start using the plugin, go to <b>General → Attachments</b> in the right panel of your selected project. Click the <b>+</b> to attach a .jip file to the project that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
+    </p>
+  </div>
+  <div>
+    <img src="./assets/images/Attach_JIP_File.png" alt="Placeholder image" style="max-width: 200px; height: auto;">
+  </div>
+</div>
+
 
 ### RUNNING JOBS
 
+![Job section](./assets/images/RunningJobsSection.png)
+
 In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the <span style=color:red>✖</span> next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuation](#parameter-configuration).
 
+
+
 ### NODE SUMMARY
+
+![Node summary section](./assets/images/NodeSummarySection.png)
 
 In this section you will find an overview of the nodes detected in the associated .jip file. This can be used as a debugging tool to see whether the JIPipe pipeline was constructed according to the [pipeline design constraints](#pipeline-design-constraints) and JIPipeRunner therefore automatically detects the right amount of nodes.
 
 ### INPUT NODE CONFIGURATION
 
+![Input node config section](./assets/images/InputNodeConfigSection.png)
+
 If the JIPipe pipeline follows the [pipeline design constraints](#pipeline-design-constraints), this section will allow to enter the IDs of the datasets that contain the input images. The input field accepts single integers or a list of integers sepearted by commas. 
 
 ### PARAMETER CONFIGURATION
 
-This section contains the input fields of the parameters that are defined as reference parameters within the .jip file. Depending on the node and parameter type that is referenced, the input fields accept integers, floats and strings as input. 
+![Parameter config section](./assets/images/ParameterConfigSection.png)
+
+This section contains the input fields of the parameters that are defined as reference parameters within the .jip file. Depending on the node and parameter type that is referenced, the input fields accept integers, floats and strings as input. Below it you will find the ***Start JIPipeRunner*** button.
 
 ### LOG WINDOW
+
+![Log window section](./assets/images/LogWindowSection.png)
 
 Below the button that starts the pipeline execution, you will find the log window. During execution, the window will livestream the JIPipe logfile. This can be used to check on the current progress of the execution or to debug problems within the workflow. 
 
@@ -87,7 +119,9 @@ While you are already logged in when you are working with the plugin in OMERO, t
 
 In the [input node configuration section](#input-node-configuration), JIPipeRunner will only allow you to change the Dataset IDs entry of the "Define dataset IDs" nodes. Therefore, it is crucial that all relevant input that is connected to your workflow uses the following node structure:
 
-> **Define dataset IDs => List OMERO images => Dowload image from OMERO => SOME WORKFLOW** 
+<p align="center">
+  <img src="./assets/images/InputStructure.png" style="height:300px"/>
+</p>
 
 
 ### Reference parameter configuration
@@ -98,6 +132,8 @@ To prevent the display of all possible node parameters of a pipeline within the 
 
 When executed, JIPipeRunner will automatically create a new project within the OMERO database called "JIPipeResults" or use a pre-existing project with the same name. For a pipeline to store its results in a dataset within that project, it is crucial that the output that should be stored in OMERO is connected to the following node structure within the pipeline: 
 
-> **Define project IDs => Create OMERO dataset => Upload ... to OMERO <= SOME OUTPUT** 
+<p align="center">
+  <img src="./assets/images/OutputStructure.png" style="height:300px"/>
+</p>
 
-Note that the upload node needs to be connected to the output and that there are different upload nodes depending on the output type. You don't acutally have to change any of the parameters within these nodes, as JIPipeRunner will fill them for you. An exception is the Create OMERO dataset node. You may define a custom dataset name in your pipeline if you need different datasets for each output. Otherwise, all outputs will be stored in a dataset that has the time and date of execution as a name. 
+Note that the upload node needs to be connected to the output and that there are different upload nodes depending on the output type. You don't acutally have to change any of the parameters within these nodes, as JIPipeRunner will fill them for you. An exception is the ***Create OMERO dataset*** node. You may define a custom dataset name in your pipeline if you need different datasets for each output. Otherwise, all outputs will be stored in a dataset that has the time and date of execution as a name. 
