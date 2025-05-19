@@ -51,35 +51,26 @@ After the installation is completed, you can login to your OMERO database. If th
   <img src="./assets/images/TabPanel.png"/>
 </p>
 
-
 After [getting started](#getting-started), check the remaining entries of the user guide to learn about the different sections within the plugin.
 
 ### Getting started
 
 Once you select a project from the left panel the plugin tab becomes available. However, without a .jip file attached to the selected project, the plugin will display:
 
-> <p class="error" style=color:#d32f2f>Error loading configuration: HTTP 404: No JIPipe configuration found for project {project_id}.</p>
+![Error](./assets/images/NoJIP_Error.png)
 
+To start using the plugin, go to <b>General → Attachments</b> in the right panel of your selected project. Click the <b>+</b> to attach a .jip file to the project that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
 
-
-
-<div style="display: flex; align-items: flex-start;">
-  <div style="flex: 1; padding-right: 10px;">
-    <p>
-      To start using the plugin, go to <b>General → Attachments</b> in the right panel of your selected project. Click the <b>+</b> to attach a .jip file to the project that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
-    </p>
-  </div>
-  <div>
-    <img src="./assets/images/Attach_JIP_File.png" alt="Placeholder image" style="max-width: 200px; height: auto;">
-  </div>
-</div>
+<p align="center">
+  <img src="./assets/images/Attach_JIP_File.png"/>
+</p>
 
 
 ### RUNNING JOBS
 
 ![Job section](./assets/images/RunningJobsSection.png)
 
-In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the <span style=color:red>✖</span> next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuation](#parameter-configuration).
+In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the red ✖ next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuation](#parameter-configuration).
 
 
 
