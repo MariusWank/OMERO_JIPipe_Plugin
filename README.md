@@ -57,7 +57,9 @@ After [getting started](#getting-started), check the remaining entries of the us
 
 Once you select a project from the left panel the plugin tab becomes available. However, without a .jip file attached to the selected project, the plugin will display:
 
-![Error](./assets/images/NoJIP_Error.png)
+<p align="center">
+  <img src="./assets/images/NoJIP_Error.png"/>
+</p>
 
 To start using the plugin, go to <b>General → Attachments</b> in the right panel of your selected project. Click the <b>+</b> to attach a .jip file to the project that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
 
