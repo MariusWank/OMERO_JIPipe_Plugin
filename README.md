@@ -1,7 +1,7 @@
 
 # JIPipeRunner documentation
 
-JIPipeRunner is a plugin for [omero-web](https://github.com/ome/omero-web) that makes it possible to run [JIPipe](https://jipipe.hki-jena.de/) workflows directly on the server that is hosting the OMERO database. This eliminates the need for users to share their data and workflows outside of OMERO and greatly reduces the data traffic as well as aiding reproduceability.
+JIPipeRunner is a plugin for [omero-web](https://github.com/ome/omero-web) that makes it possible to run [JIPipe](https://jipipe.hki-jena.de/) workflows directly on the server that is hosting the OMERO database. This eliminates the need for users to share their data and workflows outside of OMERO and greatly reduces the data traffic as well as aiding reproducibility.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ This section assumes that [omero-web](https://github.com/ome/omero-web) is alrea
 
 ### Step 1
 
-Within your [omero-web](https://github.com/ome/omero-web) virtual enironment, install the plugin using [pip](https://pip.pypa.io/en/stable/):
+Within your [omero-web](https://github.com/ome/omero-web) virtual environment, install the plugin using [pip](https://pip.pypa.io/en/stable/):
 ```bash
 pip install git+https://github.com/MariusWank/OMERO_JIPipe_Plugin.git
 ```
@@ -72,7 +72,7 @@ To start using the plugin, go to <b>General → Attachments</b> in the right pan
 
 ![Job section](./assets/images/RunningJobsSection.png)
 
-In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the red ✖ next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuation](#parameter-configuration).
+In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the red ✖ next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuration](#parameter-configuration).
 
 
 
@@ -86,7 +86,7 @@ In this section you will find an overview of the nodes detected in the associate
 
 ![Input node config section](./assets/images/InputNodeConfigSection.png)
 
-If the JIPipe pipeline follows the [pipeline design constraints](#pipeline-design-constraints), this section will allow to enter the IDs of the datasets that contain the input images. The input field accepts single integers or a list of integers sepearted by commas. 
+If the JIPipe pipeline follows the [pipeline design constraints](#pipeline-design-constraints), this section will allow to enter the IDs of the datasets that contain the input images. The input field accepts single integers or a list of integers separated by commas. 
 
 ### PARAMETER CONFIGURATION
 
@@ -131,4 +131,4 @@ When executed, JIPipeRunner will automatically create a new project within the O
   <img src="./assets/images/OutputStructure.png" style="height:300px"/>
 </p>
 
-Note that the upload node needs to be connected to the output and that there are different upload nodes depending on the output type. You don't acutally have to change any of the parameters within these nodes, as JIPipeRunner will fill them for you. An exception is the ***Create OMERO dataset*** node. You may define a custom dataset name in your pipeline if you need different datasets for each output. Otherwise, all outputs will be stored in a dataset that has the time and date of execution as a name. 
+Note that the upload node needs to be connected to the output and that there are different upload nodes depending on the output type. You don't actually have to change any of the parameters within these nodes, as JIPipeRunner will fill them for you. An exception is the ***Create OMERO dataset*** node. You may define a custom dataset name in your pipeline if you need different datasets for each output. Otherwise, all outputs will be stored in a dataset that has the time and date of execution as a name. 
