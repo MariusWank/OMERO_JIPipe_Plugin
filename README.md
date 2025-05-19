@@ -18,28 +18,28 @@ This section assumes that [omero-web](https://github.com/ome/omero-web) is alrea
 
 Within your [omero-web](https://github.com/ome/omero-web) virtual enironment, install the plugin using [pip](https://pip.pypa.io/en/stable/):
 ```bash
-$ pip install git+https://github.com/MariusWank/OMERO_JIPipe_Plugin.git
+pip install git+https://github.com/MariusWank/OMERO_JIPipe_Plugin.git
 ```
 
 ### Step 2
 
 Add "JIPipeRunner" to the list of installed apps using [omero-web](https://github.com/ome/omero-web):
 ```bash
-$ omero config append omero.web.apps '"JIPipeRunner"'
+omero config append omero.web.apps '"JIPipeRunner"'
 ```
 
 ### Step 3
 
 Add the plugin to the right panel plugins using [omero-web](https://github.com/ome/omero-web):
 ```bash
-$ omero config append omero.web.ui.right_plugins '["JIPipeRunner", "JIPipeRunner/right_plugin_example.js.html", "jipipe_form_container"]
+omero config append omero.web.ui.right_plugins '["JIPipeRunner", "JIPipeRunner/right_plugin_example.js.html", "jipipe_form_container"]
 ```
 
 ### Step 4
 
 Restart [omero-web](https://github.com/ome/omero-web) for the changes to take effect:
 ```bash
-$ omero web restart
+omero web restart
 ```
 Should there be any errors please refer to the official [OMERO documentation](https://docs.openmicroscopy.org/omero/5.6.3/developers/Web/WebclientPlugin.html).
 
