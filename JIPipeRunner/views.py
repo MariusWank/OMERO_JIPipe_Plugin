@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
+from omero.config import ConfigXml
 from django.core.cache import cache
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -45,10 +46,17 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
         with open(jip_project_file, 'w') as jip_file:
             json.dump(project_config, jip_file)
 
+        # Locate the grid config.xml from your OMERO installation
+        cfg_file = os.path.join(os.environ["OMERODIR"], "etc", "grid", "config.xml")
+        cfg = ConfigXml(cfg_file, read_only=True)
+
+        # as_map() gives you a dict of all key→value pairs
+        imagej_path = cfg.as_map().get("omero.web.imagej")
+
         # Build the JIPipe CLI command
         command = [
             'xvfb-run', '-a',
-            '/opt/JIPipe-4.2/Fiji.app/ImageJ-linux64',
+            imagej_path,
             '-Dorg.apache.logging.log4j.simplelog.StatusLogger.level=ERROR',
             '-Dorg.apache.logging.log4j.simplelog.level=ERROR',
             '--memory', '8G',
@@ -73,6 +81,7 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
 
             # Store its PID in Redis
             cache.set(job_uuid, process.pid, timeout=CACHE_TIMEOUT)
+            log_file.write("Executable ImageJ at: " + imagej_path + "\n")
 
             for line in process.stdout:
                 log_file.write(line)
@@ -89,6 +98,7 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
 
     finally:
         # Clean up the temporary input directory and delete the PID from cache
+        cfg.close()
         cache.delete(job_uuid)
         owner = omero_conn.getUser().getName()
         user_key = f"active_jipipe_jobs_{owner}"

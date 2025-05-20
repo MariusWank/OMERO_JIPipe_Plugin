@@ -12,7 +12,7 @@ JIPipeRunner is a plugin for [omero-web](https://github.com/ome/omero-web) that 
 
 ## Installation
 
-This section assumes that [omero-web](https://github.com/ome/omero-web) is already setup and that JIPipe has been installed on the server via ImageJ as described by the [JIPipe documentation for manual installation](https://jipipe.hki-jena.de/documentation/manual-installation.html).
+This section assumes that [omero-web](https://github.com/ome/omero-web) is already setup and that JIPipe has been installed on the server via ImageJ as described by the [JIPipe documentation for manual installation](https://jipipe.hki-jena.de/documentation/manual-installation.html). If the plugin has trouble finding the ImageJ executable, double check if the application is installed to the server and that the environment variable **OMERODIR** is set as described in the [OMERO.web installation guide](https://docs.openmicroscopy.org/omero/5.6.0/sysadmins/unix/install-web/web-deployment.html).
 
 ### Step 1
 
@@ -36,6 +36,13 @@ omero config append omero.web.ui.right_plugins '["JIPipeRunner", "JIPipeRunner/r
 ```
 
 ### Step 4
+
+Set the path to the ImageJ executable from the [manual installation of JIPipe](https://jipipe.hki-jena.de/documentation/manual-installation.html) using [omero-web](https://github.com/ome/omero-web):
+```bash
+omero config set omero.web.imagej "/path/to/ImageJ"
+```
+
+### Step 5
 
 Restart [omero-web](https://github.com/ome/omero-web) for the changes to take effect:
 ```bash
