@@ -9,6 +9,7 @@ JIPipeRunner is a plugin for [omero-web](https://github.com/ome/omero-web) that 
 - omero-web 5.28
 - Django 4.2
 - JIPipe 5.0 or later
+- XVFB
 
 ## Installation
 
