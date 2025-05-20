@@ -188,6 +188,47 @@
     #center_container {
       right: 399px;
     }
+
+    .tooltip-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tooltip {
+    position: relative;
+    display: inline-block;
+    width: 17px;
+    height: 17px;
+    background-color: #ddd;
+    color: black;
+    border-radius: 50%;
+    text-align: center;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 17px;
+    align-self: baseline;
+  }
+
+  .tooltip:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 110%;
+    left: 50%;
+    background-color: #333;
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    z-index: 1;
+    font-size: 12px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    text-align: left;
+    white-space: normal; /* allow wrapping */
+    width: max-content;
+    max-width: 325px;
+  }
   </style>
 </head>
 <body>
@@ -345,14 +386,27 @@
         const groups = paramsMetadata['exported-parameters']['parameter-reference-groups'];
         groups.forEach(group => {
           group.content.forEach(item => {
+            // Get the name and path of the node
             const [uuid, paramKey] = item.path.split('/');
             paramKeyByNodeUuid[uuid] = paramKey;
             const defaultValue = nodesMap[uuid]?.[paramKey] || '';
             const fieldId = `param-${uuid}`;
+
+            // Get the clean description of the parameter
+            const raw_description = item['custom-description'] || '';
+            const tempDiv = document.createElement("div");
+            tempDiv.innerHTML = raw_description;
+            let html_free_description = tempDiv.textContent || tempDiv.innerText || "No description set in project overview.";
+            let description = html_free_description.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+            // Construct the input field
             const row = document.createElement('div');
             row.className = 'input-row';
             row.innerHTML = `
-              <label for="${fieldId}">${item['custom-name']}:</label>
+            <div class="tooltip-container">
+              <div class="tooltip" data-tooltip="${description}">?</div>
+                <label for="${fieldId}">${item['custom-name']}:</label>
+              </div>
               <input type="text"
                      id="${fieldId}"
                      name="${item['custom-name']}"

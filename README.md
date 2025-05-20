@@ -100,7 +100,9 @@ If the JIPipe pipeline follows the [pipeline design constraints](#pipeline-desig
 
 ![Parameter config section](./assets/images/ParameterConfigSection.png)
 
-This section contains the input fields of the parameters that are defined as reference parameters within the .jip file. Depending on the node and parameter type that is referenced, the input fields accept integers, floats and strings as input. Below it you will find the ***Start JIPipeRunner*** button.
+This section contains the input fields of the parameters that are defined as reference parameters within the .jip file. Depending on the node and parameter type that is referenced, the input fields accept integers, floats or strings as input. When hovering the **?** the plugin will display a tooltip with the description of the respective parameter (if it was set in the [project overview](https://jipipe.hki-jena.de/documentation/project-overview.html)).
+
+Below this section you will find the ***Start JIPipeRunner*** button to execute the attached .jip file.
 
 ### LOG WINDOW
 
