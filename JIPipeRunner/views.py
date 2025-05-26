@@ -5,7 +5,6 @@ import shutil
 import signal
 import subprocess
 import tempfile
-import threading
 import uuid
 
 from pathlib import Path
@@ -16,12 +15,15 @@ from omero.config import ConfigXml
 from django.core.cache import cache
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render
+from JIPipePlugin.celery import app
 from django.views.decorators.http import require_GET, require_POST
 
 import omero
 import omero.model
 from omero.rtypes import rstring
 from omeroweb.decorators import login_required
+from JIPipeRunner.tasks import run_jipipe_task
+from celery.result import AsyncResult
 
 # Directory where JIPipe log files are stored (customize via Django settings)
 LOG_DIR = getattr(settings, 'JIPIPE_LOG_ROOT', '/tmp/jipipe_logs')
@@ -30,12 +32,12 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Time (in seconds) to keep PIDs in cache before expiring (None == never expire)
 CACHE_TIMEOUT: Optional[int] = None
 
+logger = logging.getLogger(__name__)
+
 def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file_path: str) -> None:
     """
     Execute JIPipe CLI in a background thread and stream its output to a log file.
     """
-    log = logging.getLogger(__name__)
-
     # Create temporary directories for input and output data
     temp_input = tempfile.mkdtemp()
     temp_output = tempfile.mkdtemp()
@@ -94,7 +96,7 @@ def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file
         # Log any exceptions to the same log file
         with open(log_file_path, 'a') as log_file:
             log_file.write(f"\nERROR in JIPipe background job: {error}\n")
-        log.error("Error during JIPipe execution: %s", error)
+        logger.error("Error during JIPipe execution: %s", error)
 
     finally:
         # Clean up the temporary input directory and delete the PID from cache
@@ -147,11 +149,11 @@ def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
     cache.set(user_key, active, timeout=CACHE_TIMEOUT)
 
     # Launch the background thread
-    threading.Thread(
-        target=_run_jipipe_thread,
-        args=(project_config, job_uuid, conn, log_file),
-        daemon=True,
-    ).start()
+    run_jipipe_task.apply_async(
+        args=[project_config, job_uuid, owner, log_file],
+        task_id=job_uuid,
+        ignore_result=True,
+    )
 
     return JsonResponse({'job_id': job_uuid})
 
@@ -167,10 +169,6 @@ def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
         job_id = data.get('job_id')
         if not job_id:
             return JsonResponse({'error': 'Missing job_id'}, status=400)
-
-        pid = cache.get(job_id)
-        if not pid:
-            return JsonResponse({'error': 'Job not found or already finished'}, status=404)
         
         owner = conn.getUser().getName()
         user_key = f"active_jipipe_jobs_{owner}"
@@ -178,9 +176,9 @@ def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
         if job_id not in active:
             return JsonResponse({'error': 'Job not found or not owned by you'}, status=404)
 
-        # Send SIGTERM to the process group
-        os.killpg(pid, signal.SIGTERM)
-        cache.delete(job_id)
+        # Revoke the Celery task (terminate immediately with SIGTERM)
+        result = AsyncResult(job_id)
+        result.revoke(terminate=True, signal=signal.SIGTERM)
 
         active.discard(job_id)
         cache.set(user_key, active, timeout=CACHE_TIMEOUT)
@@ -200,7 +198,7 @@ def list_jipipe_jobs(request, conn=None, **kwargs):
 
 @require_GET
 @login_required()
-def fetch_jipipe_logs(request, job_id: str, **kwargs) -> JsonResponse:
+def fetch_jipipe_logs(request, job_id: str, conn=None, **kwargs) -> JsonResponse:
     """
     Return the status and accumulated logs for a running or finished JIPipe job.
 
@@ -213,9 +211,15 @@ def fetch_jipipe_logs(request, job_id: str, **kwargs) -> JsonResponse:
 
     with open(log_file, 'r') as file_handle:
         log_lines = file_handle.read().splitlines()
+    
+    owner = conn.getUser().getName()
+    user_key = f"active_jipipe_jobs_{owner}"
+    active = set(cache.get(user_key, []))
+    if job_id not in active:
+        finished = True
 
     # Determine if the job finished by checking for the exit code message
-    finished = any('JIPipe exited with code' in line for line in log_lines[-3:])
+    finished = any('JIPipe exited with code' in line for line in log_lines[-3:]) or (job_id not in active)
     status = 'finished' if finished else 'running'
 
     return JsonResponse({'status': status, 'logs': log_lines})

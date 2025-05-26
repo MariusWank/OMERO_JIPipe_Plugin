@@ -425,12 +425,12 @@
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
             body: JSON.stringify({ job_id: jobId })
           });
+          const text = await resp.text();
           if (!resp.ok) {
-            const text = await resp.text();
             logOutput.textContent += `\nFailed to stop job ${jobId}: ${resp.status}\n${text}`;
             return;
           }
-          logOutput.textContent += `\nCanceled job ${jobId}`;
+          logOutput.textContent += `\nCanceling job ${jobId}`;
         } catch (err) {
           console.error('Error while calling stop_jipipe_job:', err);
         }
