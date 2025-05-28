@@ -11,12 +11,25 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
+import json
+from omero.config import ConfigXml
+
+try:
+    cfg_file = os.path.join(os.environ["OMERODIR"], "etc", "grid", "config.xml")
+    cfg = ConfigXml(cfg_file, read_only=True)
+    raw = cfg.as_map().get("omero.web.caches")
+
+    if raw:
+        CACHES = json.loads(raw)
+    else:
+        raise RuntimeError("omero.web.caches not found in config.xml")
+
+except Exception as e:
+    raise RuntimeError(f"Failed to load OMERO cache config: {e}")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
