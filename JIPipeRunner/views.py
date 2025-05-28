@@ -1,29 +1,25 @@
 import json
 import logging
 import os
-import shutil
 import signal
-import subprocess
-import tempfile
 import uuid
-
-from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
-from omero.config import ConfigXml
 from django.core.cache import cache
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render
-from JIPipePlugin.celery import app
 from django.views.decorators.http import require_GET, require_POST
+
+from JIPipePlugin.celery import app
+from JIPipeRunner.tasks import run_jipipe_task
+from celery.result import AsyncResult
 
 import omero
 import omero.model
 from omero.rtypes import rstring
 from omeroweb.decorators import login_required
-from JIPipeRunner.tasks import run_jipipe_task
-from celery.result import AsyncResult
+
 
 # Directory where JIPipe log files are stored (customize via Django settings)
 LOG_DIR = getattr(settings, 'JIPIPE_LOG_ROOT', '/tmp/jipipe_logs')
@@ -32,125 +28,63 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Time (in seconds) to keep PIDs in cache before expiring (None == never expire)
 CACHE_TIMEOUT: Optional[int] = None
 
+# Intialize the logger
 logger = logging.getLogger(__name__)
 
-def _run_jipipe_thread(project_config: dict, job_uuid: str, omero_conn, log_file_path: str) -> None:
+@login_required()
+def jipipe_runner_index(request, conn=None, **kwargs) -> HttpResponse:
     """
-    Execute JIPipe CLI in a background thread and stream its output to a log file.
+    Display the JIPipeRunner HTML.
     """
-    # Create temporary directories for input and output data
-    temp_input = tempfile.mkdtemp()
-    temp_output = tempfile.mkdtemp()
-
-    try:
-        # Write the JIPipe project configuration to a .jip file
-        jip_project_file = Path(temp_input) / 'JIPipeProject.jip'
-        with open(jip_project_file, 'w') as jip_file:
-            json.dump(project_config, jip_file)
-
-        # Locate the grid config.xml from your OMERO installation
-        cfg_file = os.path.join(os.environ["OMERODIR"], "etc", "grid", "config.xml")
-        cfg = ConfigXml(cfg_file, read_only=True)
-
-        # as_map() gives you a dict of all key→value pairs
-        imagej_path = cfg.as_map().get("omero.web.imagej")
-
-        # Build the JIPipe CLI command
-        command = [
-            'xvfb-run', '-a',
-            imagej_path,
-            '-Dorg.apache.logging.log4j.simplelog.StatusLogger.level=ERROR',
-            '-Dorg.apache.logging.log4j.simplelog.level=ERROR',
-            '--memory', '8G',
-            '--pass-classpath',
-            '--full-classpath',
-            '--main-class', 'org.hkijena.jipipe.cli.JIPipeCLIMain',
-            'run',
-            '--project', str(jip_project_file),
-            '--output-folder', temp_output,
-        ]
-
-        # Launch the process and stream stdout/stderr to the log file
-        with open(log_file_path, 'w') as log_file:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                preexec_fn=os.setsid,
-            )
-
-            # Store its PID in Redis
-            cache.set(job_uuid, process.pid, timeout=CACHE_TIMEOUT)
-            log_file.write("Executable ImageJ at: " + imagej_path + "\n")
-
-            for line in process.stdout:
-                log_file.write(line)
-                log_file.flush()
-
-            process.wait()
-            log_file.write(f"\n[ JIPipe exited with code {process.returncode} ]\n")
-
-    except Exception as error:
-        # Log any exceptions to the same log file
-        with open(log_file_path, 'a') as log_file:
-            log_file.write(f"\nERROR in JIPipe background job: {error}\n")
-        logger.error("Error during JIPipe execution: %s", error)
-
-    finally:
-        # Clean up the temporary input directory and delete the PID from cache
-        cfg.close()
-        cache.delete(job_uuid)
-        owner = omero_conn.getUser().getName()
-        user_key = f"active_jipipe_jobs_{owner}"
-        active = set(cache.get(user_key, []))
-        active.discard(job_uuid)
-        cache.set(user_key, active, timeout=CACHE_TIMEOUT)
-        shutil.rmtree(temp_input)
-        shutil.rmtree(temp_output)
-
+    return render(
+        request,
+        'JIPipeRunner/dataset_input.html'
+    )
 
 @require_POST
 @login_required()
 def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
     """
-    Start a JIPipe job in the background.
-
-    Expects a JSON payload describing the project graph.
-    Returns JSON with a unique job ID.
+    Start a JIPipe job in the background using Celery.
+    Expects a JSON payload containing the .jip file content.
+    Returns JSON with the unique job ID of the started job.
 
     URL: JIPipeRunner/start_jipipe_job/
+    param request: Django HTTP request object
+    param conn: OMERO connection object (optional, used for user context)
     """
-    # Parse the incoming configuration
-    project_config = json.loads(request.body.decode('utf-8'))
 
-    # Always run as the default OMERO group
-    conn.SERVICE_OPTS.setOmeroGroup('0')
+    # Parse the incoming configuration
+    jipipe_json = json.loads(request.body.decode('utf-8'))
+
+    cache.set('test_key', 'from_view', timeout=120)
+
+    # TODO: Validate the JIPipe JSON structure here for security and correctness
 
     # Ensure there is a JIPipeResults project to store outputs
     results_project = _get_or_create_results_project(conn)
     results_project_id = int(results_project.getId())
 
-    # Assign dataset IDs for define-project-ids nodes
-    for node in project_config.get('graph', {}).get('nodes', {}).values():
-        alias = node.get('jipipe:alias-id', '').lower()
-        if 'define-project-ids' in alias:
+    # Assign dataset IDs of target output dataset to the define-project-ids nodes to save outputs to
+    for node in jipipe_json.get('graph', {}).get('nodes', {}).values():
+        node_alias_id = node.get('jipipe:alias-id', '').lower()
+        if 'define-project-ids' in node_alias_id:
             node['dataset-ids'] = [results_project_id]
 
-    # Prepare the log file path and unique job identifier
+    # Prepare the log file path and unique job identifier to reference the job later on
     job_uuid = uuid.uuid4().hex
     log_file = os.path.join(LOG_DIR, f'{job_uuid}.log')
 
+    # Update the cache to track active jobs for the user
     owner = conn.getUser().getName()
     user_key = f"active_jipipe_jobs_{owner}"
     active = set(cache.get(user_key, []))
     active.add(job_uuid)
     cache.set(user_key, active, timeout=CACHE_TIMEOUT)
 
-    # Launch the background thread
+    # Launch the background thread to run the JIPipe task using Celery and attach the unique job ID for reference
     run_jipipe_task.apply_async(
-        args=[project_config, job_uuid, owner, log_file],
+        args=[jipipe_json, job_uuid, owner, log_file],
         task_id=job_uuid,
         ignore_result=True,
     )
@@ -161,15 +95,23 @@ def start_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
 @login_required()
 def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
     """
-    Stop a running JIPipe job by job_id.  
-    Expects JSON: { "job_id": "<uuid>" }
+    Stop a running JIPipe job by revoking the Celery task.
+    Expects a JSON payload containing the job_id to stop.
+    Returns JSON with the status and job_id of the stopped 
+    job if successful, or an error otherwise.
+
+    URL: JIPipeRunner/stop_jipipe_job/
+    param request: Django HTTP request object
+    param conn: OMERO connection object (optional, used for user context)
     """
     try:
-        data = json.loads(request.body)
-        job_id = data.get('job_id')
+        # Parse the incoming JSON payload to get the job_id
+        job_dict = json.loads(request.body)
+        job_id = job_dict.get('job_id')
         if not job_id:
             return JsonResponse({'error': 'Missing job_id'}, status=400)
         
+        # Get the current user and their active jobs from cache to verify ownership
         owner = conn.getUser().getName()
         user_key = f"active_jipipe_jobs_{owner}"
         active = set(cache.get(user_key, []))
@@ -180,6 +122,7 @@ def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
         result = AsyncResult(job_id)
         result.revoke(terminate=True, signal=signal.SIGTERM)
 
+        # Remove the job from the active jobs cache after successful revoke
         active.discard(job_id)
         cache.set(user_key, active, timeout=CACHE_TIMEOUT)
 
@@ -191,6 +134,16 @@ def stop_jipipe_job(request, conn=None, **kwargs) -> JsonResponse:
 @require_GET
 @login_required()
 def list_jipipe_jobs(request, conn=None, **kwargs):
+    """
+    List all active JIPipe jobs for the current user.
+    Returns a JSON response with job IDs of currently 
+    running jobs owned by the current user.
+    
+    param request: Django HTTP request object
+    param conn: OMERO connection object (optional, used for user context)
+    """
+
+    # Get the current user and their active jobs from cache
     owner = conn.getUser().getName()
     user_key = f"active_jipipe_jobs_{owner}"
     job_ids = cache.get(user_key, [])
@@ -198,73 +151,75 @@ def list_jipipe_jobs(request, conn=None, **kwargs):
 
 @require_GET
 @login_required()
-def fetch_jipipe_logs(request, job_id: str, conn=None, **kwargs) -> JsonResponse:
+def fetch_jipipe_logs(request, job_uuid: str, conn=None, **kwargs) -> JsonResponse:
     """
-    Return the status and accumulated logs for a running or finished JIPipe job.
+    Fetch the logs for a specific JIPipe job using its UUID.
+    Expects the job UUID as a URL parameter.
+    Returns a JSON response with the job status and log lines.
+    If the job is not found, returns a 404 error.
 
-    URL: JIPipeRunner/fetch_jipipe_logs/<job_id>
+    URL: JIPipeRunner/fetch_jipipe_logs/<str:job_uuid>/
+    param request: Django HTTP request object
+    param job_uuid: Unique identifier for the JIPipe job
+    param conn: OMERO connection object (optional, used for user context)
     """
-    log_file = os.path.join(LOG_DIR, f'{job_id}.log')
+    try:
+        # Get the log file from LOG_DIR using the job UUID
+        log_file = os.path.join(LOG_DIR, f'{job_uuid}.log')
+        
+        # Raise an error if the log file does not exist
+        if not os.path.exists(log_file):
+            raise Http404(f'Job not found: {job_uuid}')
 
-    if not os.path.exists(log_file):
-        raise Http404(f'Job not found: {job_id}')
+        # Get the log lines from the file to return them
+        with open(log_file, 'r') as file_handle:
+            log_lines = file_handle.read().splitlines()
+        
+        # Check if the job is still active by looking in the cache
+        owner = conn.getUser().getName()
+        user_key = f"active_jipipe_jobs_{owner}"
+        active = set(cache.get(user_key, []))
 
-    with open(log_file, 'r') as file_handle:
-        log_lines = file_handle.read().splitlines()
+        # Determine if the job finished by checking the exit code message or if it is still in the active set
+        finished = any('JIPipe exited with code' in line for line in log_lines[-3:]) or (job_uuid not in active)
+        status = 'finished' if finished else 'running'
+
+        # Remove the job from active cache if it has finished but not removed yet
+        if finished and job_uuid in active:
+            active.discard(job_uuid)
+            cache.set(user_key, active, timeout=CACHE_TIMEOUT)
+
+        return JsonResponse({'status': status, 'logs': log_lines})
     
-    owner = conn.getUser().getName()
-    user_key = f"active_jipipe_jobs_{owner}"
-    active = set(cache.get(user_key, []))
-    if job_id not in active:
-        finished = True
-
-    # Determine if the job finished by checking for the exit code message
-    finished = any('JIPipe exited with code' in line for line in log_lines[-3:]) or (job_id not in active)
-    status = 'finished' if finished else 'running'
-
-    return JsonResponse({'status': status, 'logs': log_lines})
-
-
-@login_required()
-def jipipe_runner_index(request, project_id: int, conn=None, **kwargs) -> HttpResponse:
-    """
-    Display the dataset input form for a given OMERO project.
-    """
-    return render(
-        request,
-        'JIPipeRunner/dataset_input.html',
-        {'project_id': project_id}
-    )
-
-
-@login_required()
-def get_jipipe_config(request, project_id: int, conn=None, **kwargs) -> JsonResponse:
-    """
-    Fetch the JIPipe JSON configuration stored as a FileAnnotation on the project.
-    """
-    logger = logging.getLogger(__name__)
-    conn.SERVICE_OPTS.setOmeroGroup('0')
-
-    project = conn.getObject('Project', project_id)
-    if project is None:
-        return HttpResponse(f'Project {project_id} not found.', status=404)
-
-    # Find the first FileAnnotation attached to the project
-    annotation = next(
-        (ann for ann in project.listAnnotations()
-         if ann.OMERO_TYPE == omero.model.FileAnnotationI),
-        None,
-    )
-
-    if annotation is None:
+    except Exception as parse_error:
+        logger.exception('Failed to retrieve jipipe log: %s', parse_error)
         return HttpResponse(
-            f'No JIPipe configuration found for project {project_id}.',
-            status=404,
+            f'Error retrieving jipipe log: {parse_error}',
+            status=400,
         )
 
+@login_required()
+def get_jipipe_config(request, jip_file_id: int, conn=None, **kwargs) -> JsonResponse:
+    """
+    Fetch the .jip file based on its file ID in OMERO.
+    Expects the file ID as a URL parameter.
+    Returns a JSON response with the parsed content of the .jip file.
+
+    URL: JIPipeRunner/get_jipipe_config/<jip_file_id>/
+    param request: Django HTTP request object
+    param jip_file_id: Unique identifier for the JIPipe file in OMERO
+    param conn: OMERO connection object (optional, used for user context)
+    """
+    # Get the .jip file from OMERO using the provided file ID
+    jip_file = conn.getObject('originalfile', jip_file_id)
+
+    # If the file does not exist, return a 404 error
+    if jip_file is None or not jip_file.getName().endswith('.jip'):
+        return HttpResponse(f'.jip file with ID {jip_file_id} not found.', status=404)
+    
     try:
         # Read and parse the JSON data from the annotation
-        raw_bytes = b''.join(annotation.getFileInChunks())
+        raw_bytes = b''.join(jip_file.getFileInChunks())
         config_text = raw_bytes.decode('utf-8')
         config_data = json.loads(config_text)
     except Exception as parse_error:
@@ -276,26 +231,100 @@ def get_jipipe_config(request, project_id: int, conn=None, **kwargs) -> JsonResp
 
     return JsonResponse(config_data, safe=False)
 
+@login_required()
+def list_jipipe_files(request, conn=None, **kwargs) -> JsonResponse:
+    """
+    List all unique JIPipe-related files attached to projects in 
+    all OMERO groups of the current user. 
+    Returns a JSON response with file IDs and names.
+
+    URL: JIPipeRunner/list_jipipe_files/
+    param request: Django HTTP request object
+    param conn: OMERO connection object (optional, used for user context)
+    """
+    try:
+        # Store the JIPipe files attached to projects in groups of current user
+        owned_project_annotation_files = []
+
+        # Set of seen file IDs to prevent duplicates
+        seen_file_ids = set()
+
+        # Get the list of groups the user is a member of to prevent unauthorized access
+        user_groups = conn.getGroupsMemberOf()
+
+        # Save the current group so we can switch back later
+        current_group = conn.getEventContext().groupId
+
+        # Iterate through each group the user is a member of
+        for group in user_groups:
+            group_id = group.getId()
+
+            # Switch to the group for accessing its projects
+            conn.setGroupForSession(group_id)
+
+            # Get all projects in the group
+            projects = list(conn.getObjects("Project"))
+
+            # Iterate through each project in the group
+            for project in projects:
+
+                # Get annotations (can include files, tags, etc.)
+                annotations = project.listAnnotations()
+
+                # Iterate through each annotation in the project to find JIPipe files
+                for ann in annotations:
+                    # Filter for file annotations that are JIPipe files
+                    if ann.OMERO_TYPE == omero.model.FileAnnotationI and ann.getFile().getName().endswith('.jip'):
+                        file_obj = ann.getFile()
+                        file_id = file_obj.getId()
+
+                        # If the file ID has not been seen before, add it to the list
+                        if file_id not in seen_file_ids:
+                            seen_file_ids.add(file_id)
+                            owned_project_annotation_files.append({
+                                "file_id": file_id,
+                                "file_name": file_obj.getName()
+                            })
+
+        # Switch back to the original group
+        conn.setGroupForSession(current_group)
+
+        return JsonResponse({'files': owned_project_annotation_files})
+    
+    except Exception as e:
+        # log the full stack trace so you can see what went wrong
+        logger.exception("Failed to list JIPipe files")
+        return JsonResponse(
+            {'error': 'Internal server error retrieving JIPipe files.'},
+            status=500
+        )
 
 # Helper: ensure the results project exists
-
 def _get_or_create_results_project(conn) -> omero.gateway.ProjectWrapper:
+    """
+    Ensure that a project named 'JIPipeResults' exists on the 
+    OMERO server and in the current group of the active user.
+    If it does not exist, create it with a description.
+    Returns the Project object if it exists or was created successfully.
+    """
+
+    # Define the project name to look for or create
     project_name = 'JIPipeResults'
 
     # Attempt to find an existing project
-    existing = conn.getObject('Project', attributes={'name': project_name})
-    if existing:
-        return existing
+    existing_results_project = conn.getObject('Project', attributes={'name': project_name})
+    if existing_results_project:
+        return existing_results_project
 
-    # Create a new Project model and save it
+    # Create a new Project with the specified name if it does not exist
     new_project_model = omero.model.ProjectI()
     new_project_model.setName(rstring(project_name))
     new_project_model.setDescription(rstring('Project to save all JIPipe results'))
-
     saved_model = conn.getUpdateService().saveAndReturnObject(
         new_project_model,
         conn.SERVICE_OPTS,
     )
 
+    # Get the ID of the newly created project and return the Project object
     new_id = saved_model.getId().getValue()
     return conn.getObject('Project', new_id)

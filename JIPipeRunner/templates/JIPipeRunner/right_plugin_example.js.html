@@ -2,10 +2,13 @@
     $(function() {
        // Initialise the right tab plugin, on our specified tab element
        $("#jipipe_form_container").omeroweb_right_plugin({
-           supported_obj_types: ['project'],
+           plugin_enabled: function(selected){
+                // Check if the selected object is of the correct type
+                return true;
+           },
            load_plugin_content: function(selected, obj_dtype, obj_id) {
                    // Dynamically generate the URL with the correct project_id
-                   var url = "{% url 'jipipe_runner_index' project_id=0%}".replace("0", obj_id);
+                   var url = "{% url 'jipipe_runner_index' %}";
                    $(this).load(url);
             },
        });
