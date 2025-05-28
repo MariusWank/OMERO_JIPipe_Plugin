@@ -10,16 +10,18 @@ JIPipeRunner is a plugin for [omero-web](https://github.com/ome/omero-web) that 
 - Django 4.2
 - JIPipe 5.0 or later
 - XVFB
+- Celery 
+- redis
 
 ## Installation
 
-This section assumes that [omero-web](https://github.com/ome/omero-web) is already setup and that JIPipe has been installed on the server via ImageJ as described by the [JIPipe documentation for manual installation](https://jipipe.hki-jena.de/documentation/manual-installation.html). If the plugin has trouble finding the ImageJ executable, double check if the application is installed to the server and that the environment variable **OMERODIR** is set as described in the [OMERO.web installation guide](https://docs.openmicroscopy.org/omero/5.6.0/sysadmins/unix/install-web/web-deployment.html).
+This section assumes that [omero-web](https://github.com/ome/omero-web) is already setup with redis caching and that JIPipe has been installed on the server via ImageJ as described by the [JIPipe documentation for manual installation](https://jipipe.hki-jena.de/documentation/manual-installation.html). If the plugin has trouble finding the ImageJ executable, double check if the application is installed to the server and that the environment variable **OMERODIR** is set as described in the [OMERO.web installation guide](https://docs.openmicroscopy.org/omero/5.6.0/sysadmins/unix/install-web/web-deployment.html). This is also important for the redis caching to work properly.
 
 ### Step 1
 
 Within your [omero-web](https://github.com/ome/omero-web) virtual environment, install the plugin using [pip](https://pip.pypa.io/en/stable/):
 ```bash
-pip install git+https://github.com/MariusWank/OMERO_JIPipe_Plugin.git
+pip install git+https://asb-git.hki-jena.de/MWank/OMERO_JIPipe_Plugin.git
 ```
 
 ### Step 2
@@ -49,11 +51,30 @@ Restart [omero-web](https://github.com/ome/omero-web) for the changes to take ef
 ```bash
 omero web restart
 ```
-Should there be any errors please refer to the official [OMERO documentation](https://docs.openmicroscopy.org/omero/5.6.3/developers/Web/WebclientPlugin.html).
+
+Should there be any errors please regarding the webclient plugin installation refer to the official [OMERO WebclientPlugin documentation](https://docs.openmicroscopy.org/omero/5.6.3/developers/Web/WebclientPlugin.html).
+
+### Step 6
+
+Launch a Celery worker that will manage the jobs launched by the JIPipeRunner Celery app using:
+```bash
+celery -A JIPipePlugin worker --loglevel=info
+```
+
+The worker will use the redis cache as a backend that is defined in the OMERO settings, so be sure to have followed the [OMERO.web installation guide](https://docs.openmicroscopy.org/omero/5.6.0/sysadmins/unix/install-web/web-deployment.html) to include redis caching and define the OMERODIR environment variable correctly. JIPipeRunner will use your default cache backend location at:
+
+```text
+omero.web.caches = {
+  "default": {
+    "BACKEND": "django_redis.cache.RedisCache",
+    "LOCATION": "redis://127.0.0.1:6379/0"
+  }
+}
+```
 
 ## User guide
 
-After the installation is completed, you can login to your OMERO database. If the installation was successful, you should see a grayed-out tab called ***JIPipeRunner*** in the right panel. 
+After the installation is completed, you can login to your OMERO server. If the installation was successful, you should see a tab called ***JIPipeRunner*** in the right panel. 
 
 <p align="center">
   <img src="./assets/images/TabPanel.png"/>
@@ -63,13 +84,13 @@ After [getting started](#getting-started), check the remaining entries of the us
 
 ### Getting started
 
-Once you select a project from the left panel the plugin tab becomes available. However, without a .jip file attached to the selected project, the plugin will display:
+The plugin will load its content depending on the .jip file you select at the top of the configuration:
 
 <p align="center">
-  <img src="./assets/images/NoJIP_Error.png"/>
+  <img src="./assets/images/JipSelector.png"/>
 </p>
 
-To start using the plugin, go to <b>General → Attachments</b> in the right panel of your selected project. Click the <b>+</b> to attach a .jip file to the project that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server. Once the file is attached, the plugin is ready to be used. It may be necessary to click the refresh button on the left panel or to reload the page to update the plugin content.
+JIPipeRunner will automatically offer you all .jip files as an option that are attached projects that you own or are a member of. To start using the plugin properly, you first need to have at least one .jip file attached to one of these projects. To do so, go to <b>General → Attachments</b> in the right panel of any of your projects. Click the <b>+</b> to attach a .jip file that adheres to the <a href="#pipeline-design-constraints">pipeline design constraints</a>. You can choose to upload a local file or use an already existing one on the server.
 
 <p align="center">
   <img src="./assets/images/Attach_JIP_File.png"/>
@@ -78,37 +99,35 @@ To start using the plugin, go to <b>General → Attachments</b> in the right pan
 
 ### RUNNING JOBS
 
+In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the red ✖ next to the job UID you can terminate the associated job.
+
 ![Job section](./assets/images/RunningJobsSection.png)
-
-In this section you will find a list of all the JIPipe jobs currently running on the server that were initiated by the current user. By clicking the red ✖ next to the job UID you can terminate the associated job. Alternatively, you can cancel the current job by clicking the **Stop JIPipeRunner** button below the [parameter configuration](#parameter-configuration).
-
-
 
 ### NODE SUMMARY
 
-![Node summary section](./assets/images/NodeSummarySection.png)
-
 In this section you will find an overview of the nodes detected in the associated .jip file. This can be used as a debugging tool to see whether the JIPipe pipeline was constructed according to the [pipeline design constraints](#pipeline-design-constraints) and JIPipeRunner therefore automatically detects the right amount of nodes.
+
+![Node summary section](./assets/images/NodeSummarySection.png)
 
 ### INPUT NODE CONFIGURATION
 
-![Input node config section](./assets/images/InputNodeConfigSection.png)
-
 If the JIPipe pipeline follows the [pipeline design constraints](#pipeline-design-constraints), this section will allow to enter the IDs of the datasets that contain the input images. The input field accepts single integers or a list of integers separated by commas. 
+
+![Input node config section](./assets/images/InputNodeConfigSection.png)
 
 ### PARAMETER CONFIGURATION
 
-![Parameter config section](./assets/images/ParameterConfigSection.png)
-
 This section contains the input fields of the parameters that are defined as reference parameters within the .jip file. Depending on the node and parameter type that is referenced, the input fields accept integers, floats or strings as input. When hovering the **?** the plugin will display a tooltip with the description of the respective parameter (if it was set in the [project overview](https://jipipe.hki-jena.de/documentation/project-overview.html)).
 
-Below this section you will find the ***Start JIPipeRunner*** button to execute the attached .jip file.
+Below this section you will find the ***Start JIPipeRunner*** button to execute the selected .jip file.
+
+![Parameter config section](./assets/images/ParameterConfigSection.png)
 
 ### LOG WINDOW
 
-![Log window section](./assets/images/LogWindowSection.png)
-
 Below the button that starts the pipeline execution, you will find the log window. During execution, the window will livestream the JIPipe logfile. This can be used to check on the current progress of the execution or to debug problems within the workflow. 
+
+![Log window section](./assets/images/LogWindowSection.png)
 
 ## Pipeline design constraints
 
